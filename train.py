@@ -41,6 +41,7 @@ from utils_console import (
 )
 from utils_tee_eta import Tee, ETAEstimator, estimate_training_time
 from schedulers import LossProportionalLR
+from logging_utils import make_writer, log_metrics
 
 
 def datetime_now() -> str:
@@ -111,6 +112,9 @@ def parse_args() -> argparse.Namespace:
                    default="cosine", help="LR 调度器：cosine / loss_prop（论文 §3.4）")
     p.add_argument("--lr_min", type=float, default=1e-6,
                    help="LR 下限（loss_prop 调度器用）")
+    # D3 训练日志
+    p.add_argument("--logger", type=str, choices=["none", "tensorboard", "wandb"],
+                   default="none", help="训练日志：none / tensorboard / wandb")
     return p.parse_args()
 
 
@@ -223,6 +227,9 @@ def main() -> None:
         sys.stdout = tee
         sys.stderr = tee
         atexit.register(tee.close)
+
+    # D3 训练日志 writer（tensorboard / wandb，可选）
+    tb_writer = make_writer(args.logger, os.path.join(os.path.dirname(args.log) or ".", "tb"))
 
     # CSV 日志（沿用 v4:1429-1434 + v0.3 扩展 14 列）
     os.makedirs(os.path.dirname(args.log) or ".", exist_ok=True)
@@ -408,6 +415,9 @@ def main() -> None:
             f"{eta_info['eta_seconds']:.1f}",
             f"{eta_info['ema']:.2f}",
         ])
+
+        # D3：发射指标到 tensorboard/wandb（可选）
+        log_metrics(tb_writer, epoch, comps)
 
         # 控制台日志（带颜色 + ETA）
         if epoch == 1 or epoch % args.print_every == 0 or epoch == args.epochs:
