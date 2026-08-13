@@ -147,6 +147,11 @@ class JPINN(nn.Module):
     def count_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
+    @property
+    def num_networks(self) -> int:
+        """子网络数量（消融公平性断言用：full=4, two=2, single=1）"""
+        return 4
+
 
 # ============================================================
 # 消融变体：单区域 PINN（论文 §4.6）
@@ -180,7 +185,7 @@ class SingleRegionPINN(nn.Module):
 
     @property
     def num_networks(self) -> int:
-        return 2
+        return 1
 
 
 # ============================================================
@@ -227,7 +232,7 @@ class TwoRegionPINN(nn.Module):
 
     @property
     def num_networks(self) -> int:
-        return 1
+        return 2
 
 
 # ============================================================
