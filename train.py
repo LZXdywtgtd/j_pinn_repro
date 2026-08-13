@@ -40,6 +40,7 @@ from utils_console import (
     print_title, print_result, print_header,
 )
 from utils_tee_eta import Tee, ETAEstimator, estimate_training_time
+from schedulers import LossProportionalLR
 
 
 def datetime_now() -> str:
@@ -99,6 +100,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--boundary_strategy", type=str, choices=["resample", "fixed"],
                    default="resample",
                    help="外边界采样策略：resample（每 epoch 重新采样）/ fixed（固定点，P2 用）")
+    # P17 损失比例 LR 调度器
+    p.add_argument("--scheduler", type=str, choices=["cosine", "loss_prop"],
+                   default="cosine", help="LR 调度器：cosine / loss_prop（论文 §3.4）")
+    p.add_argument("--lr_min", type=float, default=1e-6,
+                   help="LR 下限（loss_prop 调度器用）")
     return p.parse_args()
 
 
@@ -164,9 +170,12 @@ def main() -> None:
     # Fix A2/A3：scheduler.T_max 用 args.epochs（resume 时会被 checkpoint 内 target_epochs 覆盖）；
     # scheduler.last_epoch 通过 load_state_dict 从 checkpoint 恢复（自动设置正确）
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args.epochs, eta_min=1e-6
-    )
+    if args.scheduler == "loss_prop":
+        scheduler = LossProportionalLR(optimizer, loss_ref=None, lr_min=args.lr_min)
+    else:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=args.epochs, eta_min=1e-6
+        )
 
     # 损失聚合器
     weights = LossWeights(
@@ -358,7 +367,10 @@ def main() -> None:
         total.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
-        scheduler.step()
+        if args.scheduler == "loss_prop":
+            scheduler.step(comps["total"])  # P17：损失比例 LR，需传 loss
+        else:
+            scheduler.step()
 
         elapsed = time.time() - epoch_t0
         eta.update(elapsed)  # P7 修复：之前从未调用，ETA 恒为 ?/0
