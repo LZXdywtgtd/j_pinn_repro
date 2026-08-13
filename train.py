@@ -33,6 +33,7 @@ if CURRENT_DIR not in sys.path:
 from data.dataset import ThermalDataset
 from losses import LossAggregator, LossWeights
 from models.pinn_core import build_model
+from outlier import OutlierConfig
 from utils_console import (
     print_info, print_warning, print_error, print_success,
     print_title, print_result, print_header,
@@ -51,7 +52,8 @@ def datetime_now() -> str:
 # ============================================================
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="J-PINN 训练入口（2D 热力场降维版）")
-    p.add_argument("--epochs", type=int, default=5000, help="训练总 epoch")
+    p.add_argument("--epochs", type=int, default=None,
+                   help="训练总 epoch（默认 5000；--resume 未传时沿用 checkpoint 的 target）")
     p.add_argument("--lr", type=float, default=1e-3, help="初始学习率")
     p.add_argument("--device", type=str, default="cpu", help="cpu / cuda")
     p.add_argument("--data", type=str, default="data/synthetic_thermal.npz", help="数据 .npz 路径")
@@ -84,6 +86,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lambda_bc", type=float, default=1.0)
     p.add_argument("--lambda_neumann_crack", type=float, default=0.05)
     p.add_argument("--lambda_smooth", type=float, default=0.0)
+    # P2 Z-score 边界去噪（v0.5）
+    p.add_argument("--outlier_enabled", action="store_true",
+                   help="启用 Z-score 边界去噪（论文 §3.3 Eq.19-20）")
+    p.add_argument("--outlier_burnin", type=int, default=100,
+                   help="P2 burn-in epochs（宽限期）")
+    p.add_argument("--outlier_delta", type=float, default=3.0,
+                   help="P2 Z-score 阈值 δ")
+    p.add_argument("--outlier_ema_alpha", type=float, default=0.1,
+                   help="P2 残差平方 EMA 平滑系数 α")
+    p.add_argument("--boundary_strategy", type=str, choices=["resample", "fixed"],
+                   default="resample",
+                   help="外边界采样策略：resample（每 epoch 重新采样）/ fixed（固定点，P2 用）")
     return p.parse_args()
 
 
@@ -103,14 +117,22 @@ def main() -> None:
         ckpt_args = resume_state.get("args", {})
         if "seed" in ckpt_args:
             args.seed = ckpt_args["seed"]
-        if "epochs" in ckpt_args and int(ckpt_args["epochs"]) > 0:
-            # Fix A2: 用 checkpoint 内的 epochs 覆盖，让 scheduler.T_max 对齐
-            args.epochs = int(ckpt_args["epochs"])
+        if args.epochs is None:
+            # 用户未显式传 --epochs：沿用 checkpoint 的 target（scheduler 对齐）
+            if "epochs" in ckpt_args and int(ckpt_args["epochs"]) > 0:
+                args.epochs = int(ckpt_args["epochs"])
+        # 用户显式传 --epochs：优先 CLI（允许续训延长目标）
+        if args.epochs is None:
+            args.epochs = 5000  # 默认兜底
         print_info(f"[RESUME] 从 {args.resume} 恢复（completed_epoch={resume_state.get('epoch', '?')}，"
                    f"target_epochs={args.epochs}，best_loss={resume_state.get('best_loss', '?'):.4e}）")
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
+
+    # 非 resume 或 resume 未传 --epochs：默认 5000
+    if args.epochs is None:
+        args.epochs = 5000
 
     # 精度与设备
     dtype = torch.float64
@@ -154,7 +176,20 @@ def main() -> None:
         lambda_neumann_crack=args.lambda_neumann_crack,
         lambda_smooth=args.lambda_smooth,
     )
-    agg = LossAggregator(weights)
+    # P2：Z-score 边界去噪（可选）
+    outlier_cfg = None
+    if args.outlier_enabled:
+        outlier_cfg = OutlierConfig(
+            enabled=True,
+            burnin_epochs=args.outlier_burnin,
+            delta=args.outlier_delta,
+            ema_alpha=args.outlier_ema_alpha,
+        )
+        print_info(
+            f"[P2] Z-score 边界去噪启用：burnin={args.outlier_burnin} "
+            f"δ={args.outlier_delta} α={args.outlier_ema_alpha}"
+        )
+    agg = LossAggregator(weights, outlier_cfg=outlier_cfg, device=device)
 
     # v0.3 友好化：Tee（实时落盘）+ ETA 估算器
     tee: Tee | None = None
@@ -176,6 +211,7 @@ def main() -> None:
     writer.writerow([
         "timestamp", "task_id", "ablation", "epoch",
         "total", "pde", "iface", "tnormal", "bc", "neumann", "smooth",
+        "bc_active_frac", "bc_n_outliers",
         "lr", "seconds", "eta_seconds", "ema_s",
     ])
 
@@ -226,6 +262,10 @@ def main() -> None:
             torch.set_rng_state(resume_state["rng_state"])
             if "numpy_rng_state" in resume_state:
                 np.random.set_state(resume_state["numpy_rng_state"])
+        # P2：恢复 outlier tracker 状态（续训）
+        if agg.outlier is not None and "outlier_state_dict" in resume_state:
+            if resume_state["outlier_state_dict"] is not None:
+                agg.outlier.load_state_dict(resume_state["outlier_state_dict"])
         # Fix A1：保存时存的是 completed_epochs 而非 args.epochs
         # 兼容旧版（存 args.epochs）：若 completed_epoch > target_epochs 视为旧版，跳过
         completed_epoch = int(resume_state.get("epoch", 0))
@@ -259,6 +299,9 @@ def main() -> None:
                     "scheduler_state_dict": scheduler.state_dict(),
                     "rng_state": torch.get_rng_state(),
                     "numpy_rng_state": np.random.get_state(),
+                    "outlier_state_dict": (
+                        agg.outlier.state_dict() if agg.outlier is not None else None
+                    ),
                 },
                 args.out,
             )
@@ -279,9 +322,9 @@ def main() -> None:
             seed=args.seed + epoch,
         )
 
-        # forward + loss
+        # forward + loss（P2：传 current_epoch 用于 burn-in）
         optimizer.zero_grad()
-        total, comps = agg(model, batch)
+        total, comps = agg(model, batch, current_epoch=epoch)
 
         if torch.isnan(total):
             print_warning(f"epoch {epoch} 出现 NaN，跳过（保留上一参数）")
@@ -297,9 +340,9 @@ def main() -> None:
         cur_lr = optimizer.param_groups[0]["lr"]
         eta_info = eta.get_eta(epoch)
 
-        # 写入 CSV（14 列）
+        # 写入 CSV（16 列）
         writer.writerow([
-            datetime_now().isoformat(),
+            datetime_now(),  # 已返回 ISO 字符串（勿再 .isoformat()）
             task_id,
             args.ablation,
             epoch,
@@ -310,6 +353,8 @@ def main() -> None:
             f"{comps['bc']:.6e}",
             f"{comps['neumann']:.6e}",
             f"{comps['smooth']:.6e}",
+            f"{comps['bc_active_frac']:.4f}",
+            f"{comps['bc_n_outliers']:d}",
             f"{cur_lr:.6e}",
             f"{elapsed:.4f}",
             f"{eta_info['eta_seconds']:.1f}",
@@ -363,6 +408,10 @@ def main() -> None:
             "scheduler_state_dict": scheduler.state_dict(),
             "rng_state": torch.get_rng_state(),
             "numpy_rng_state": np.random.get_state(),
+            # P2：outlier tracker 状态
+            "outlier_state_dict": (
+                agg.outlier.state_dict() if agg.outlier is not None else None
+            ),
         },
         args.out,
     )

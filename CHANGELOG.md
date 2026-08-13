@@ -17,12 +17,27 @@
   - `_natural_sort_key`：按文件名数字 token 排序（温度001 < 温度010）
   - `_auto_detect_subdir`：无硬编码优先级，基于实际目录结构
 - **测试**：`tests/test_comsol_png_loader.py` 扩展 10 个 D1 测试（数字排序/4D volume/首帧一致性/field 检测/max_frames/as_array/空目录/缺字段/多目录自动选/单色抑制）
+- **P2 Z-score 边界去噪**（论文 §3.3 Eq.19-20）：
+  - `outlier.py`：OutlierConfig + BoundaryOutlierTracker（EMA + MAD 稳健 Z-score）
+  - 用中位数 + MAD 而非 mean/std（测试暴露 mean/std 对稀疏 outlier 不敏感）
+  - L_bc 除以 `N_total / N_active` 归一化（论文 Table 5：88% 损失下降）
+  - `--boundary_strategy fixed` 支撑持久 mask
+  - smoke_test Step 11 端到端验证（active_frac=0.838 检出 13 outlier）
+  - `tests/test_outlier.py` 5 单元测试（EMA/spike/burn-in/min_active/normalization）
 
 ### Fixed
 - **P11 遗留性能 bug**：`_rgb_to_colorbar_position` 构造 `(H*W, H_cb, 3)` 距离矩阵 → 2000×1500 图 OOM（单帧 35.6s）
   - 修复：色标下采样到 `min(n_levels, len(cb_rgb))`（默认 128）+ argmin 向量化
 - **P11 遗留检测 bug**：`_detect_physical_region` 把色标条纳入物理域（right 扩到色标右缘）
   - 修复：用"最宽连续厚列块"（计数 > 0.5*height）区分物理域与窄色标带
+- **v0.3 遗留 utils_console.py 孤立三引号**：line 22 多余 `"""` 导致 tokenizer 报全角括号 SyntaxError
+  - 修复：删掉孤立 `"""`
+- **v0.3 遗留 GBK 编码**：`generate_synthetic_thermal_data.py` 打印 `∇²T` Unicode 在 Windows GBK 控制台报 UnicodeEncodeError
+  - 修复：改用 ASCII（Laplacian / [OK] / [WARN]）
+- **v0.3 遗留 datetime 双调用**：`train.py` CSV 写入 `datetime_now().isoformat()` 而 `datetime_now()` 已返回字符串
+  - 修复：改为 `datetime_now()`（去重 `.isoformat()`）
+- **v0.4 续训 epochs 语义**：`--resume` 强制用 checkpoint 的 target_epochs，无法延长训练
+  - 修复：`--epochs` 默认 None；显式传时优先 CLI，未传时沿用 checkpoint
 
 ### Known Limitations
 - 训练结果（checkpoints/*.pt, logs/*.csv）不入仓

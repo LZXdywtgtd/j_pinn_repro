@@ -193,18 +193,18 @@ def main(N: int = 200, out_path: str | None = None) -> None:
         meta_N=N,
     )
 
-    # 报告
+    # 报告（注意：Windows GBK 控制台无法打印 ∇/²/⚠️ 等 Unicode，用 ASCII 替代）
     print(f"== 合成 2D 热力场生成完成 ==")
     print(f"  网格: {N}x{N}  域: [{DOMAIN['x_min']},{DOMAIN['x_max']}] x [{DOMAIN['y_min']},{DOMAIN['y_max']}]")
     print(f"  保存到: {out_path}")
     print(f"  T_full 范围:  [{T_full.min():.4f}, {T_full.max():.4f}]")
     print(f"  T_smooth 范围: [{T_smooth.min():.4f}, {T_smooth.max():.4f}]")
     print(f"  region_id 取值: {sorted(np.unique(region_id).tolist())}")
-    print(f"  调和性自检 (∇²T_smooth): max={lap_max_interior:.3e}  mean={lap_mean_interior:.3e}")
+    print(f"  调和性自检 (Laplacian(T_smooth)): max={lap_max_interior:.3e}  mean={lap_mean_interior:.3e}")
     if lap_max_interior > 1e-6:
-        print(f"  ⚠️  调和性偏离较大 (max={lap_max_interior:.3e})，检查解析函数")
+        print(f"  [WARN] 调和性偏离较大 (max={lap_max_interior:.3e})，检查解析函数")
     else:
-        print(f"  ✓ 调和性自检通过（∇²T ≈ 0 在非裂纹内部，非源近端）")
+        print(f"  [OK] 调和性自检通过 (Laplacian ~ 0 在非裂纹内部，非源近端)")
 
 
 if __name__ == "__main__":

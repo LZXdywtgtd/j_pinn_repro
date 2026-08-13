@@ -240,11 +240,47 @@ class LossWeights:
 
 ```python
 class LossAggregator:
-    def __init__(self, weights: LossWeights | None = None) -> None: ...
-    def __call__(self, model, batch: dict) -> tuple[torch.Tensor, dict]:
+    def __init__(
+        self,
+        weights: LossWeights | None = None,
+        outlier_cfg: OutlierConfig | None = None,  # v0.5 P2
+        device: torch.device | str = "cpu",
+    ) -> None: ...
+    def __call__(
+        self, model, batch: dict, current_epoch: int = 0
+    ) -> tuple[torch.Tensor, dict]:
         """返回 (total, components_dict)；components_dict 字段:
-        'pde'/'iface'/'bc'/'neumann'/'smooth'/'total' (均为 float)"""
+        'pde'/'iface'/'tnormal'/'bc'/'neumann'/'smooth'
+        + 'bc_active_frac'/'bc_n_outliers' (P2 启用时)
+        + 'total' (均为 float)"""
 ```
+
+### 3.4 `outlier`（P2，v0.5 新增）
+
+```python
+@dataclass
+class OutlierConfig:
+    enabled: bool = True
+    burnin_epochs: int = 100      # Γ 宽限期
+    delta: float = 3.0            # δ Z-score 阈值
+    ema_alpha: float = 0.1        # 残差平方 EMA 平滑系数
+    min_active_per_edge: int = 5  # 每条边最少保留点数
+    n_edges: int = 4
+
+class BoundaryOutlierTracker:
+    def __init__(self, cfg, device="cpu", dtype=torch.float64) -> None: ...
+    def update(self, residuals, x, y, edge_id, epoch) -> torch.Tensor:
+        """返回 active_mask (N,) bool；Z-score 测试（MAD 稳健估计）"""
+    def get_active_count_per_edge(self) -> Dict[int, int]: ...
+    def state_dict(self) -> dict: ...
+    def load_state_dict(self, state) -> None: ...
+```
+
+**Z-score 算法**（论文 §3.3 Eq.19-20）：
+- 每点维护残差平方 `(T_pred - T_target)²` 的 EMA（α 平滑）
+- burn-in（Γ=100）后，每 edge 内用中位数 + MAD（median absolute deviation）估算 μ/σ
+- `Z_i = |EMA_i - μ_edge| / (σ_edge + ε)`，`Z_i > δ=3.0` 标记 outlier
+- L_bc 除以 `N_total / N_active` 归一化（论文 Table 5：88% 损失下降）
 
 ---
 
@@ -306,7 +342,7 @@ def T_exact_torch(x, y, include_crack=True, eps=1e-4,
 ### 5.1 命令行参数
 
 ```
---epochs          int   5000      # 训练总 epoch
+--epochs          int   None      # 训练总 epoch（默认 5000；--resume 未传时沿用 checkpoint target）
 --lr              float 1e-3      # 初始学习率
 --device          str   cpu        # cpu/cuda
 --data            str   data/synthetic_thermal.npz
@@ -320,7 +356,13 @@ def T_exact_torch(x, y, include_crack=True, eps=1e-4,
 --seed            int   42
 --print_every     int   500
 --log_plain       flag            # 禁用 ANSI 颜色 + Tee 日志（CI/重定向场景）
---resume          str   None     # 续训 checkpoint 路径；恢复 model + optimizer + scheduler + RNG
+--resume          str   None     # 续训 checkpoint 路径；恢复 model + optimizer + scheduler + RNG + outlier
+--boundary_strategy str resample # 外边界采样：resample（每 epoch 重新采样）/ fixed（固定点，P2 用）
+# P2 Z-score 边界去噪（v0.5）
+--outlier_enabled  flag            # 启用 Z-score 边界去噪（论文 §3.3 Eq.19-20）
+--outlier_burnin   int   100       # burn-in 宽限期 Γ
+--outlier_delta    float 3.0       # Z-score 阈值 δ
+--outlier_ema_alpha float 0.1      # 残差平方 EMA 平滑系数 α
 --lambda_pde             float 100.0
 --lambda_interface       float 10.0
 --lambda_interface_normal float 1.0  # L_traction（缝合边法向连续）；v0.2 新增
@@ -329,10 +371,12 @@ def T_exact_torch(x, y, include_crack=True, eps=1e-4,
 --lambda_smooth          float 0.0
 ```
 
-**续训行为**（v0.4 P4-core）：
-- `--resume <ckpt>` 时，checkpoint 内的 `args["seed"]` 与 `args["epochs"]` 覆盖 CLI（保证可复现 + scheduler 对齐）
+**续训行为**（v0.4 P4-core + v0.5 调整）：
+- `--resume <ckpt>` 时，checkpoint 内的 `args["seed"]` 覆盖 CLI（保证可复现）
+- `--epochs` 语义：显式传入时优先 CLI（允许续训延长目标）；未传（None）时沿用 checkpoint 的 `target_epochs`
 - 从 `checkpoint["epoch"]` (completed_epoch) +1 开始训练
 - 若 checkpoint 无 `optimizer/scheduler state`（旧版），跳过对应 load
+- P2 outlier tracker 状态随 checkpoint 保存/恢复（`outlier_state_dict`）
 - 兼容旧版格式：若 `completed_epoch >= target_epochs` 视为旧版（存的是 target），自动修正
 
 ### 5.2 Checkpoint 格式

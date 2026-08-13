@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 J-PINN 控制台输出工具（仿 v4 utils/console.py）
 
@@ -17,7 +18,6 @@ J-PINN 控制台输出工具（仿 v4 utils/console.py）
     print_result("mIoU", 0.6103)    # 青色高亮
     print_warning("NaN 出现")
     print_error("checkpoint 加载失败")
-"""
 """
 
 import sys

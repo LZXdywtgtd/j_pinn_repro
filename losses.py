@@ -1,5 +1,5 @@
 """
-损失函数（5 类）+ 聚合器
+损失函数（5 类 + P2 outlier）+ 聚合器
 
 对应论文 §2.3 Eq. 12-19，把 Navier-Cauchy 替换为 2D Laplace ∇²T=0：
 
@@ -8,6 +8,7 @@
 3. bc_loss_dirichlet — 外边界 Dirichlet（Huber，论文 Eq. 20）
 4. neumann_crack_loss — 裂纹段两侧法向跳跃（Huber）
 5. smoothness_loss   — Sobolev Hessian 正则（论文 L_smooth，可关）
+6. (P2) outlier.py   — Z-score 边界去噪（论文 §3.3 Eq.19-20，可选）
 
 实现要点：
 - 全程 PyTorch autograd 计算 ∂²T/∂x² 与 ∂²T/∂y²
@@ -17,10 +18,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
+
+# P2 Z-score 边界去噪（v0.5）
+try:
+    from outlier import BoundaryOutlierTracker, OutlierConfig, bc_residuals
+except ImportError:  # 兼容非模块上下文
+    BoundaryOutlierTracker = None
+    OutlierConfig = None
+    bc_residuals = None
 
 
 # ============================================================
@@ -258,15 +267,30 @@ class LossAggregator:
         "crack": {"top": (x,y,rid), "bot": (x,y,rid),
                   "T_jump_value": float, "dT_jump_value": float},
     }
+
+    P2 扩展（v0.5）：
+    - outlier_cfg 传入 OutlierConfig 时启用 Z-score 边界去噪
+    - 需在 __call__ 传 current_epoch（用于 burn-in 判断）
     """
 
-    def __init__(self, weights: LossWeights | None = None) -> None:
+    def __init__(
+        self,
+        weights: LossWeights | None = None,
+        outlier_cfg: Optional[OutlierConfig] = None,
+        device: torch.device | str = "cpu",
+    ) -> None:
         self.w = weights or LossWeights()
+        self.outlier: Optional[BoundaryOutlierTracker] = None
+        if outlier_cfg is not None and outlier_cfg.enabled:
+            self.outlier = BoundaryOutlierTracker(
+                outlier_cfg, device=device, dtype=torch.float64
+            )
 
     def __call__(
         self,
         model: torch.nn.Module,
         batch: dict,
+        current_epoch: int = 0,
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         # 1. PDE
         xi, yi, rid_i = batch["interior"]
@@ -288,6 +312,33 @@ class LossAggregator:
         L_b = bc_loss_dirichlet(
             model, bd["x"], bd["y"], rid_b.to(bd["x"].device), bd["T_target"]
         )
+
+        # P2：Z-score 边界去噪（可选）
+        bc_active_frac = 1.0
+        bc_n_outliers = 0
+        if self.outlier is not None:
+            res = bc_residuals(model, bd["x"], bd["y"], rid_b.to(bd["x"].device), bd["T_target"])
+            active_mask = self.outlier.update(
+                res, bd["x"], bd["y"], bd["edge_id"], current_epoch
+            )
+            n_active = int(active_mask.sum().item())
+            n_total = int(active_mask.numel())
+            bc_n_outliers = n_total - n_active
+            bc_active_frac = n_active / max(n_total, 1)
+            if n_active == 0:
+                # 防御：空活跃集 → L_bc = 0（避免 NaN）
+                import warnings
+                warnings.warn("P2: 外边界活跃集为空，L_bc 置 0")
+                L_b = torch.tensor(0.0, device=L_p.device, dtype=L_p.dtype)
+            else:
+                L_b_raw = bc_loss_dirichlet(
+                    model,
+                    bd["x"][active_mask], bd["y"][active_mask],
+                    rid_b.to(bd["x"].device)[active_mask],
+                    bd["T_target"][active_mask],
+                )
+                # 论文 Table 5：|A| 归一化（N_total / N_active）
+                L_b = L_b_raw * (n_total / n_active)
 
         # 4. Neumann 裂纹
         ck = batch["crack"]
@@ -319,6 +370,8 @@ class LossAggregator:
             "bc": float(L_b.item()),
             "neumann": float(L_n.item()),
             "smooth": float(L_s.item()),
+            "bc_active_frac": bc_active_frac,
+            "bc_n_outliers": bc_n_outliers,
             "total": float(total.item()),
         }
         return total, comps

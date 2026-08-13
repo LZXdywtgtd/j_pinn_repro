@@ -216,11 +216,10 @@ def main() -> int:
         )
         with open(log_v2, "r", encoding="utf-8") as f:
             lines_v2 = f.readlines()
-        # v2 应有 100 行（从头 + 续训）；但 CSV 用 args.log="w" 重写（v0.2 设计）
-        # 实际行为：log_v2 应该是 100 行（重置 + 续训 50）= 100
-        assert len(lines_v2) == 101, f"v2 应有 101 行（header+100 epoch），实际 {len(lines_v2)}"
+        # v2 续训：从 epoch 51 跑 50 个（51..100）= 50 行数据 + header = 51 行
+        assert len(lines_v2) == 51, f"v2 应有 51 行（header+50 续训 epoch），实际 {len(lines_v2)}"
         v2_last_epoch = len(lines_v2) - 1
-        print(f"  ✓ 续训完成：总 {v2_last_epoch} epoch（v1 + v2 = 50+100，预期 100）")
+        print(f"  ✓ 续训完成：v2 跑了 {v2_last_epoch} 个 epoch（51..100）")
 
         # 验证 v2 的 best_loss 与 ckpt_v2 一致
         v2_state = torch.load(ckpt_v2, map_location="cpu", weights_only=False)
@@ -231,6 +230,44 @@ def main() -> int:
         print(f"  ✓ 续训端到端通过：50→100 共 100 epoch，checkpoint schema 正确")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # Step 11: P2 Z-score 边界去噪（端到端，burnin=0 快速验证）
+    step("11) P2 Z-score 边界去噪（端到端）")
+    from outlier import OutlierConfig
+    from losses import LossAggregator as LA2
+    outlier_cfg = OutlierConfig(
+        enabled=True, burnin_epochs=0, delta=3.0, ema_alpha=0.3,
+        min_active_per_edge=2,
+    )
+    agg_p2 = LA2(outlier_cfg=outlier_cfg)
+    # 用同一 batch，模拟 30 epoch 训练（固定 batch，outlier mask 应稳定）
+    x_b, y_b, rid_b = batch["boundary"]["x"], batch["boundary"]["y"], None
+    n_bc = x_b.shape[0]
+    # 给边界 batch 注入 5% outlier（人为提高残差）
+    import numpy as _np
+    rng = _np.random.default_rng(0)
+    n_out = max(1, int(0.05 * n_bc))
+    out_idx = rng.choice(n_bc, size=n_out, replace=False)
+    # 用真实模型预测来生成残差，然后人为放大 outlier 的 T_target
+    T_target = batch["boundary"]["T_target"].clone()
+    T_target[out_idx] += 5.0  # 注入大偏差
+    batch_p2 = dict(batch)
+    batch_p2["boundary"] = dict(batch["boundary"])
+    batch_p2["boundary"]["T_target"] = T_target
+    # 30 epoch mini-training
+    for ep in range(30):
+        optimizer.zero_grad()
+        total_p2, comps_p2 = agg_p2(model, batch_p2, current_epoch=ep)
+        if torch.isnan(total_p2):
+            print(f"  [ERROR] P2 epoch {ep} NaN")
+            return 1
+        total_p2.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+    print(f"  bc_active_frac 终值: {comps_p2['bc_active_frac']:.3f} (outliers={comps_p2['bc_n_outliers']})")
+    # 断言：outlier 被检出（active_frac 应 < 1.0）
+    assert comps_p2["bc_active_frac"] < 1.0, "P2 应检测出 outlier（active_frac < 1.0）"
+    print(f"  ✓ P2 检出 outlier：active_frac={comps_p2['bc_active_frac']:.3f}")
 
     print("\n" + "=" * 60)
     print("✓ ALL SMOKE TESTS PASSED")
