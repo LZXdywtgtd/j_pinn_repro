@@ -17,6 +17,7 @@ J-PINN 特有：
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import os
 import sys
@@ -216,9 +217,14 @@ def main() -> None:
     ])
 
     # ============================================================
-    # 干跑验证（沿用 v4:1532-1680）
+    # 干跑验证（沿用 v4:1532-1680 + D1-fix：无条件回滚状态）
     # ============================================================
     print_info("[干跑] 验证一次 forward+backward ...")
+    # D1-fix（CODE_BUGS N-5）：干跑前快照 model/optimizer/scheduler，
+    # 干跑是冒烟测试，参数更新不持久；无条件回滚避免 Adam 动量被首次 batch 污染
+    dry_model_state = {k: v.clone() for k, v in model.state_dict().items()}
+    dry_optimizer_state = copy.deepcopy(optimizer.state_dict())
+    dry_scheduler_state = copy.deepcopy(scheduler.state_dict())
     try:
         batch = ds.get_collocation_batch(
             n_int_per_region=128,
@@ -239,6 +245,11 @@ def main() -> None:
         print_error(f"[干跑] 失败：{e}")
         log_f.close()
         raise
+    finally:
+        # D1-fix：无条件回滚（成功/失败都恢复干净状态）
+        model.load_state_dict(dry_model_state)
+        optimizer.load_state_dict(dry_optimizer_state)
+        scheduler.load_state_dict(dry_scheduler_state)
 
     # ============================================================
     # 主训练循环

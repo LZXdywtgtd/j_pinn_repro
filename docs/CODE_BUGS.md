@@ -9,14 +9,6 @@
 
 ## 已知未修 bug
 
-### Bug N-5：干跑污染 Adam optimizer 状态（优先级：低，来源 v0.4 P4-core 审计）
-
-**症状**：干跑验证后 optimizer 的 Adam 动量 m/v 已"污染"（基于初始样本更新）
-**根因**：干跑后 `optimizer.step()` 没回滚（v4 用 `dry_run_state` 快照恢复）
-**影响**：正式训练从 step 1 开始时 Adam 已有虚假动量；可能影响收敛稳定性
-**修复方案**：v4:1538-1682 模式——`optimizer_state = {k: v.clone() for k, v in optimizer.state_dict().items()}`后回滚
-**决策**：低优先级，影响有限；v0.5+ 再修
-
 ### Bug N-6：Step 8 rng_state 覆盖加强（优先级：低，来源 v0.4 P4-core 审计）
 
 **症状**：Step 8 checkpoint roundtrip 只验证 key 存在，未验证值有效性
@@ -60,6 +52,13 @@
 ---
 
 ## 已修复 bug 历史
+
+### Bug F-7：干跑污染 Adam optimizer 状态（原 N-5）[✅ 修复于 v0.6 D1-fix]
+
+**症状**：干跑验证后 optimizer 的 Adam 动量 m/v 已"污染"（基于初始样本更新）
+**根因**：干跑后 `optimizer.step()` 没回滚
+**修复**：`train.py` 干跑块加 finally 无条件回滚 model/optimizer/scheduler 状态
+**验证**：干跑后 `optimizer.state_dict()["state"]` 为空（干净状态）
 
 ### Bug F-1：调和性自检偏差大 [✅ 修复于 commit 3dfa53e]
 
