@@ -9,6 +9,22 @@
 
 ## 已知未修 bug
 
+### Bug N-5：干跑污染 Adam optimizer 状态（优先级：低，来源 v0.4 P4-core 审计）
+
+**症状**：干跑验证后 optimizer 的 Adam 动量 m/v 已"污染"（基于初始样本更新）
+**根因**：干跑后 `optimizer.step()` 没回滚（v4 用 `dry_run_state` 快照恢复）
+**影响**：正式训练从 step 1 开始时 Adam 已有虚假动量；可能影响收敛稳定性
+**修复方案**：v4:1538-1682 模式——`optimizer_state = {k: v.clone() for k, v in optimizer.state_dict().items()}`后回滚
+**决策**：低优先级，影响有限；v0.5+ 再修
+
+### Bug N-6：Step 8 rng_state 覆盖加强（优先级：低，来源 v0.4 P4-core 审计）
+
+**症状**：Step 8 checkpoint roundtrip 只验证 key 存在，未验证值有效性
+**根因**：smoke test 偷懒
+**影响**：极小（Step 9 已覆盖）
+**修复方案**：Step 8 加 `assert torch.equal(saved_rng, current_rng)` 等值断言
+**决策**：低优先级
+
 ### Bug N-1：消融对比不公平（优先级：中）
 
 **症状**：Full 用 λ_pde=1 训练，Single/Two 用 λ_pde=100 训练，E₂ 数字不严格可比

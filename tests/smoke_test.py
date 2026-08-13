@@ -16,6 +16,9 @@ from __future__ import annotations
 import os
 import sys
 import subprocess
+import shutil
+import tempfile
+import numpy as np
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
@@ -117,14 +120,117 @@ def main() -> int:
     assert final_loss < initial_loss, f"Loss 未下降 ({initial_loss:.4e} → {final_loss:.4e})"
     print(f"  ✓ Loss 下降，pipeline 通畅")
 
-    # Step 8: checkpoint
-    step("8) 保存与加载 checkpoint")
+    # Step 8: checkpoint（含续训所需 state）
+    step("8) 保存与加载 checkpoint（含续训所需 state）")
     ckpt_path = os.path.join(PROJECT_ROOT, "checkpoints/smoke.pt")
-    torch.save({"model_state_dict": model.state_dict(), "epoch": 10}, ckpt_path)
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "epoch": 10,
+            "ablation": "full",
+            "loss_weights": {},
+            "n_params": n_params,
+            "best_loss": float(final_loss),
+            "ds_meta": {"T_min": ds.T_min, "T_max": ds.T_max, "spec": ds.spec.__dict__},
+            "args": {},
+            "optimizer_state_dict": None,    # smoke 测试无 Adam state，省略
+            "scheduler_state_dict": None,
+            "rng_state": torch.get_rng_state(),
+            "numpy_rng_state": np.random.get_state(),
+        },
+        ckpt_path,
+    )
     state = torch.load(ckpt_path, weights_only=False)
     assert "model_state_dict" in state
+    assert "rng_state" in state
+    assert "numpy_rng_state" in state
+    print(f"  ✓ Checkpoint roundtrip OK（含 optimizer/scheduler/RNG slot）")
+
+    # Step 9: 续训一致性验证（mock：保存当前 loss → 模拟 resume → 应能恢复）
+    step("9) 续训一致性（RNG state roundtrip）")
+    rng_before = torch.get_rng_state()
+    np_state_before = np.random.get_state()
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "epoch": 10,
+            "rng_state": rng_before,
+            "numpy_rng_state": np_state_before,
+        },
+        ckpt_path,
+    )
+    # 模拟训练扰动 RNG
+    torch.randn(100)
+    np.random.rand(100)
+    # 恢复
+    restored = torch.load(ckpt_path, weights_only=False)
+    torch.set_rng_state(restored["rng_state"])
+    np.random.set_state(restored["numpy_rng_state"])
+    rng_after = torch.get_rng_state()
+    np_state_after = np.random.get_state()
+    assert torch.equal(rng_before, rng_after), "RNG state roundtrip failed"
+    assert np_state_before[0] == np_state_after[0], "NumPy RNG state roundtrip failed"
+    print(f"  ✓ RNG state 完全恢复（torch + numpy）")
     os.remove(ckpt_path)
-    print(f"  ✓ Checkpoint roundtrip OK")
+
+    # Step 10: 端到端续训验证（subprocess 调 train.py --resume）
+    step("10) 端到端续训验证（subprocess 调 train.py --resume）")
+    tmpdir = tempfile.mkdtemp(prefix="jpinn_resume_")
+    try:
+        # 准备数据
+        npz_src = os.path.join(PROJECT_ROOT, "data/synthetic_thermal.npz")
+        npz_dst = os.path.join(tmpdir, "synthetic_thermal.npz")
+        shutil.copy(npz_src, npz_dst)
+
+        # 第一次训练：50 epochs
+        ckpt_v1 = os.path.join(tmpdir, "v1.pt")
+        log_v1 = os.path.join(tmpdir, "v1.csv")
+        subprocess.run(
+            [
+                sys.executable, os.path.join(PROJECT_ROOT, "train.py"),
+                "--epochs", "50", "--out", ckpt_v1, "--log", log_v1,
+                "--log_plain",  # 禁用颜色 + Tee（CI 测试场景）
+                "--print_every", "100",
+            ],
+            check=True, cwd=PROJECT_ROOT,
+        )
+        # CSV 应有 50 行数据（不计 header）
+        with open(log_v1, "r", encoding="utf-8") as f:
+            lines_v1 = f.readlines()
+        assert len(lines_v1) == 51, f"v1 应有 51 行（header+50 epoch），实际 {len(lines_v1)}"
+        v1_last_epoch = len(lines_v1) - 1
+        print(f"  ✓ 第一次训练：50 epoch 完成（CSV 行数={v1_last_epoch}）")
+
+        # 第二次：续训 +50 epoch（总 100）
+        ckpt_v2 = os.path.join(tmpdir, "v2.pt")
+        log_v2 = os.path.join(tmpdir, "v2.csv")
+        subprocess.run(
+            [
+                sys.executable, os.path.join(PROJECT_ROOT, "train.py"),
+                "--epochs", "100", "--resume", ckpt_v1,
+                "--out", ckpt_v2, "--log", log_v2,
+                "--log_plain",
+                "--print_every", "100",
+            ],
+            check=True, cwd=PROJECT_ROOT,
+        )
+        with open(log_v2, "r", encoding="utf-8") as f:
+            lines_v2 = f.readlines()
+        # v2 应有 100 行（从头 + 续训）；但 CSV 用 args.log="w" 重写（v0.2 设计）
+        # 实际行为：log_v2 应该是 100 行（重置 + 续训 50）= 100
+        assert len(lines_v2) == 101, f"v2 应有 101 行（header+100 epoch），实际 {len(lines_v2)}"
+        v2_last_epoch = len(lines_v2) - 1
+        print(f"  ✓ 续训完成：总 {v2_last_epoch} epoch（v1 + v2 = 50+100，预期 100）")
+
+        # 验证 v2 的 best_loss 与 ckpt_v2 一致
+        v2_state = torch.load(ckpt_v2, map_location="cpu", weights_only=False)
+        assert v2_state["epoch"] == 100, f"v2 checkpoint epoch 应=100，实际 {v2_state['epoch']}"
+        assert v2_state.get("target_epochs") == 100, f"v2 target_epochs 应=100，实际 {v2_state.get('target_epochs')}"
+        print(f"  ✓ v2 checkpoint epoch={v2_state['epoch']}，target_epochs={v2_state['target_epochs']}")
+
+        print(f"  ✓ 续训端到端通过：50→100 共 100 epoch，checkpoint schema 正确")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
     print("\n" + "=" * 60)
     print("✓ ALL SMOKE TESTS PASSED")

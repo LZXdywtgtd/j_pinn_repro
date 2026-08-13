@@ -284,25 +284,43 @@ def T_exact_torch(x, y, include_crack=True, eps=1e-4,
 --log             str   logs/train_history.csv
 --seed            int   42
 --print_every     int   500
+--log_plain       flag            # 禁用 ANSI 颜色 + Tee 日志（CI/重定向场景）
+--resume          str   None     # 续训 checkpoint 路径；恢复 model + optimizer + scheduler + RNG
 --lambda_pde             float 100.0
 --lambda_interface       float 10.0
+--lambda_interface_normal float 1.0  # L_traction（缝合边法向连续）；v0.2 新增
 --lambda_bc              float 1.0
 --lambda_neumann_crack   float 0.05
 --lambda_smooth          float 0.0
 ```
 
+**续训行为**（v0.4 P4-core）：
+- `--resume <ckpt>` 时，checkpoint 内的 `args["seed"]` 与 `args["epochs"]` 覆盖 CLI（保证可复现 + scheduler 对齐）
+- 从 `checkpoint["epoch"]` (completed_epoch) +1 开始训练
+- 若 checkpoint 无 `optimizer/scheduler state`（旧版），跳过对应 load
+- 兼容旧版格式：若 `completed_epoch >= target_epochs` 视为旧版（存的是 target），自动修正
+
 ### 5.2 Checkpoint 格式
 
 ```python
 torch.save({
+    # 模型
     "model_state_dict": state,
-    "epoch": 5000,
+    # 训练进度（v0.4：区分 completed 与 target）
+    "epoch": completed_epoch,        # v0.4 改为"已完成 epoch 数"
+    "target_epochs": args.epochs,    # v0.4 新增：目标 epoch 数（用于 scheduler 对齐）
+    # 元数据
     "ablation": "full",
     "loss_weights": {...},
     "n_params": 70148,
     "best_loss": 0.226,
     "ds_meta": {"T_min", "T_max", "spec"},
-    "args": {...},
+    "args": {...},                    # 完整 argparse vars()（续训时覆盖 CLI）
+    # v0.4 新增：续训所需 state
+    "optimizer_state_dict": optimizer.state_dict(),
+    "scheduler_state_dict": scheduler.state_dict(),
+    "rng_state": torch.get_rng_state(),
+    "numpy_rng_state": np.random.get_state(),
 }, "checkpoints/jpinn.pt")
 ```
 

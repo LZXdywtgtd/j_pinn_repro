@@ -73,6 +73,9 @@ def parse_args() -> argparse.Namespace:
     # v0.3 友好化日志
     p.add_argument("--log_plain", action="store_true",
                    help="禁用 ANSI 颜色 + Tee 日志文件（用于 CI / 重定向）")
+    # 续训
+    p.add_argument("--resume", type=str, default=None,
+                   help="从 checkpoint 续训；恢复 model + optimizer + scheduler + RNG state")
     # 损失权重（默认值与 losses.LossWeights dataclass 保持一致；不一致会导致 CLI 静默覆盖）
     p.add_argument("--lambda_pde", type=float, default=100.0)
     p.add_argument("--lambda_interface", type=float, default=10.0)
@@ -89,6 +92,23 @@ def parse_args() -> argparse.Namespace:
 # ============================================================
 def main() -> None:
     args = parse_args()
+
+    # 续训时优先用 checkpoint 内的 args/seed（避免 silent override）
+    resume_state = None
+    if args.resume:
+        if not os.path.exists(args.resume):
+            raise FileNotFoundError(f"--resume 路径不存在: {args.resume}")
+        resume_state = torch.load(args.resume, map_location="cpu", weights_only=False)
+        # 用 checkpoint 内的 seed/epochs 覆盖 CLI（保证续训可复现 + scheduler 对齐）
+        ckpt_args = resume_state.get("args", {})
+        if "seed" in ckpt_args:
+            args.seed = ckpt_args["seed"]
+        if "epochs" in ckpt_args and int(ckpt_args["epochs"]) > 0:
+            # Fix A2: 用 checkpoint 内的 epochs 覆盖，让 scheduler.T_max 对齐
+            args.epochs = int(ckpt_args["epochs"])
+        print_info(f"[RESUME] 从 {args.resume} 恢复（completed_epoch={resume_state.get('epoch', '?')}，"
+                   f"target_epochs={args.epochs}，best_loss={resume_state.get('best_loss', '?'):.4e}）")
+
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
@@ -118,6 +138,8 @@ def main() -> None:
         assert 60_000 < n_params < 100_000, f"4 区域 JPINN 应约 7-9 万参数，实际 {n_params}"
 
     # 优化器与调度器（沿用 v4:1494-1500；论文原选 Adam 而非 AdamW）
+    # Fix A2/A3：scheduler.T_max 用 args.epochs（resume 时会被 checkpoint 内 target_epochs 覆盖）；
+    # scheduler.last_epoch 通过 load_state_dict 从 checkpoint 恢复（自动设置正确）
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=args.epochs, eta_min=1e-6
@@ -191,7 +213,60 @@ def main() -> None:
     best_state: Optional[dict] = None
     eta = ETAEstimator(total=args.epochs, alpha=0.3)
 
-    for epoch in range(1, args.epochs + 1):
+    # 续训：恢复 model / optimizer / scheduler / RNG state / 起点
+    start_epoch = 1
+    if resume_state is not None:
+        model.load_state_dict(resume_state["model_state_dict"])
+        # 兼容旧版 checkpoint（无 optimizer/scheduler state）
+        if "optimizer_state_dict" in resume_state and resume_state["optimizer_state_dict"] is not None:
+            optimizer.load_state_dict(resume_state["optimizer_state_dict"])
+        if "scheduler_state_dict" in resume_state and resume_state["scheduler_state_dict"] is not None:
+            scheduler.load_state_dict(resume_state["scheduler_state_dict"])
+        if "rng_state" in resume_state and resume_state["rng_state"] is not None:
+            torch.set_rng_state(resume_state["rng_state"])
+            if "numpy_rng_state" in resume_state:
+                np.random.set_state(resume_state["numpy_rng_state"])
+        # Fix A1：保存时存的是 completed_epochs 而非 args.epochs
+        # 兼容旧版（存 args.epochs）：若 completed_epoch > target_epochs 视为旧版，跳过
+        completed_epoch = int(resume_state.get("epoch", 0))
+        if completed_epoch >= args.epochs:
+            print_warning(f"[RESUME] checkpoint epoch ({completed_epoch}) >= target ({args.epochs})，"
+                          f"可能是旧版格式（存的是 target）。尝试按 completed_epoch = {args.epochs} - 1 处理。")
+            completed_epoch = args.epochs - 1
+        start_epoch = completed_epoch + 1
+        # 续训 best_loss 沿用
+        if "best_loss" in resume_state and resume_state["best_loss"] is not None:
+            best_loss = float(resume_state["best_loss"])
+            best_state = resume_state["model_state_dict"]
+        print_info(f"[RESUME] 从 epoch {start_epoch} 继续训练（剩余 {args.epochs - start_epoch + 1} 轮）")
+        if start_epoch > args.epochs:
+            print_warning(f"[RESUME] start_epoch ({start_epoch}) > args.epochs ({args.epochs})，"
+                          f"无需训练；直接保存 checkpoint。")
+            # 保存并退出
+            os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+            torch.save(
+                {
+                    "model_state_dict": model.state_dict(),
+                    "epoch": args.epochs,  # 此时已"完成" target_epochs
+                    "target_epochs": args.epochs,
+                    "ablation": args.ablation,
+                    "loss_weights": weights.__dict__,
+                    "n_params": n_params,
+                    "best_loss": best_loss,
+                    "ds_meta": {"T_min": ds.T_min, "T_max": ds.T_max, "spec": ds.spec.__dict__},
+                    "args": vars(args),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": scheduler.state_dict(),
+                    "rng_state": torch.get_rng_state(),
+                    "numpy_rng_state": np.random.get_state(),
+                },
+                args.out,
+            )
+            print_info(f"Checkpoint 已保存: {args.out}")
+            log_f.close()
+            return
+
+    for epoch in range(start_epoch, args.epochs + 1):
         eta.start_epoch()
         epoch_t0 = time.time()
 
@@ -257,8 +332,11 @@ def main() -> None:
             best_loss = comps["total"]
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
 
+    # Fix A1：epoch 是 for 循环最后一次跑的数（completed_epoch）
+    # 不再用 args.epochs（语义：目标 epoch 数）
+    completed_epoch = epoch
     total_minutes = (time.time() - start) / 60.0
-    print_info(f"\n训练完成：{args.epochs} epoch，共 {total_minutes:.2f} 分钟")
+    print_info(f"\n训练完成：completed_epoch={completed_epoch} / target={args.epochs}，共 {total_minutes:.2f} 分钟")
     print_result("最佳 total loss", best_loss, fmt=".4e")
 
     # ============================================================
@@ -268,7 +346,8 @@ def main() -> None:
     torch.save(
         {
             "model_state_dict": best_state if best_state is not None else model.state_dict(),
-            "epoch": args.epochs,
+            "epoch": completed_epoch,
+            "target_epochs": args.epochs,
             "ablation": args.ablation,
             "loss_weights": weights.__dict__,
             "n_params": n_params,
@@ -279,10 +358,15 @@ def main() -> None:
                 "spec": ds.spec.__dict__,
             },
             "args": vars(args),
+            # 续训所需
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "rng_state": torch.get_rng_state(),
+            "numpy_rng_state": np.random.get_state(),
         },
         args.out,
     )
-    print(f"Checkpoint 保存到: {args.out}")
+    print_info(f"Checkpoint 保存到: {args.out}")
     log_f.close()
 
 
