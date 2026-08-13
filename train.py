@@ -59,11 +59,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--log", type=str, default="logs/train_history.csv", help="训练历史 CSV")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--print_every", type=int, default=500, help="每 N 个 epoch 打印一行")
-    # 损失权重
-    p.add_argument("--lambda_pde", type=float, default=1.0)
+    # 损失权重（默认值与 losses.LossWeights dataclass 保持一致；不一致会导致 CLI 静默覆盖）
+    p.add_argument("--lambda_pde", type=float, default=100.0)
     p.add_argument("--lambda_interface", type=float, default=10.0)
+    p.add_argument("--lambda_interface_normal", type=float, default=1.0,
+                   help="L_traction（缝合边法向连续）权重；0=关闭")
     p.add_argument("--lambda_bc", type=float, default=1.0)
-    p.add_argument("--lambda_neumann_crack", type=float, default=0.5)
+    p.add_argument("--lambda_neumann_crack", type=float, default=0.05)
     p.add_argument("--lambda_smooth", type=float, default=0.0)
     return p.parse_args()
 
@@ -111,6 +113,7 @@ def main() -> None:
     weights = LossWeights(
         lambda_pde=args.lambda_pde,
         lambda_interface=args.lambda_interface,
+        lambda_interface_normal=args.lambda_interface_normal,
         lambda_bc=args.lambda_bc,
         lambda_neumann_crack=args.lambda_neumann_crack,
         lambda_smooth=args.lambda_smooth,
@@ -122,7 +125,7 @@ def main() -> None:
     log_f = open(args.log, "w", newline="", encoding="utf-8")
     writer = csv.writer(log_f)
     writer.writerow(
-        ["epoch", "total", "pde", "iface", "bc", "neumann", "smooth", "lr", "seconds"]
+        ["epoch", "total", "pde", "iface", "tnormal", "bc", "neumann", "smooth", "lr", "seconds"]
     )
 
     # ============================================================
@@ -193,6 +196,7 @@ def main() -> None:
             f"{comps['total']:.6e}",
             f"{comps['pde']:.6e}",
             f"{comps['iface']:.6e}",
+            f"{comps['tnormal']:.6e}",
             f"{comps['bc']:.6e}",
             f"{comps['neumann']:.6e}",
             f"{comps['smooth']:.6e}",

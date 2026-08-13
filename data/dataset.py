@@ -103,6 +103,10 @@ class ThermalDataset:
         )
         return normalize_to_unit(T, self.T_min, self.T_max)
 
+    def _to_f64(self, t: torch.Tensor) -> torch.Tensor:
+        """防御性 dtype cast：np.load 可能返回非 float64，统一到 self.dtype"""
+        return t.to(self.dtype) if t.dtype != self.dtype else t
+
     # ============================================================
     # 配点 batch（每 epoch 重新采样）
     # ============================================================
@@ -134,6 +138,16 @@ class ThermalDataset:
         x_ct, y_ct, rid_ct, x_cb, y_cb, rid_cb = sample_crack(
             n_crack_per_side, spec=self.spec, device=self.device, dtype=self.dtype, seed=None if seed is None else seed + 3
         )
+
+        # dtype 数据入口统一（防御性 cast）
+        # np.load() 读 .npz 时 numpy.dtype 可能为 float32；
+        # 显式 cast 保证与模型 dtype（默认 float64）一致，避免 autograd 精度退化
+        xi, yi, xb, yb, x_ct, y_ct, x_cb, y_cb = (
+            self._to_f64(xi), self._to_f64(yi), self._to_f64(xb), self._to_f64(yb),
+            self._to_f64(x_ct), self._to_f64(y_ct), self._to_f64(x_cb), self._to_f64(y_cb),
+        )
+        T_bc_target = self._to_f64(T_bc_target)
+        ifaces = {k: tuple(self._to_f64(t) for t in v) for k, v in ifaces.items()}
 
         # 解析裂纹跳跃量（在归一化空间）
         # 裂纹项 = jump * tanh(steepness * y)，跃迁量约为 2 * jump

@@ -47,11 +47,20 @@ def main() -> int:
     ds = ThermalDataset()
     print(f"  T range: [{ds.T_min:.4f}, {ds.T_max:.4f}]")
 
-    # Step 3: 构建模型
-    step("3) 构建 4 区域 JPINN")
+    # Step 3: 构建模型（消融公平性：循环测 3 个 ablation，断言 num_networks）
+    step("3) 构建 JPINN + 消融架构公平性断言")
+    ablation_expected = {"full": 4, "two": 2, "single": 1}
+    for ab, expected in ablation_expected.items():
+        m = build_model(ablation=ab)
+        np_m = m.num_networks
+        print(f"  ablation={ab}: num_networks={np_m}, params={m.count_parameters()}")
+        assert np_m == expected, (
+            f"ablation={ab} 应有 {expected} 个子网络，实际 {np_m}"
+        )
+    print(f"  ✓ 3 个 ablation 子网络数与论文 §4.6 设定相符")
     model = build_model(ablation="full")
     n_params = model.count_parameters()
-    print(f"  参数量: {n_params}")
+    print(f"  4 区域 JPINN 参数量: {n_params}")
     # 论文 §2.3 报告 71,712（4×17,928）；本实现因 LayerNorm 比论文略有差异，宽松判定
     assert 60_000 < n_params < 100_000, (
         f"4 区域 JPINN 应约 7-9 万参数（论文 §2.3 报 71,712），实际 {n_params}"
@@ -72,14 +81,16 @@ def main() -> int:
     print(f"  interfaces: {list(batch['interface'].keys())}")
     print(f"  crack T_jump={batch['crack']['T_jump_value']:.3f}, dT_jump={batch['crack']['dT_jump_value']:.3f}")
 
-    # Step 5: 一次 forward + loss
-    step("5) Forward + 5 类损失")
+    # Step 5: 一次 forward + 6 类损失（含 L_traction）
+    step("5) Forward + 6 类损失")
     agg = LossAggregator()
     total, comps = agg(model, batch)
     print(f"  total={comps['total']:.4e}")
-    for k in ("pde", "iface", "bc", "neumann", "smooth"):
+    for k in ("pde", "iface", "tnormal", "bc", "neumann", "smooth"):
         print(f"    {k:>10s} = {comps[k]:.4e}")
     assert not torch.isnan(total), "Loss 出现 NaN"
+    assert comps["tnormal"] >= 0, f"tnormal must be non-negative MSE, got {comps['tnormal']}"
+    print(f"  ✓ L_traction (tnormal) 非负，符合 MSE 性质")
 
     # Step 6: backward
     step("6) Backward + 梯度裁剪")

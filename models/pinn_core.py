@@ -178,6 +178,10 @@ class SingleRegionPINN(nn.Module):
     def count_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
+    @property
+    def num_networks(self) -> int:
+        return 2
+
 
 # ============================================================
 # 消融变体：上下分割（2 区域）
@@ -220,6 +224,10 @@ class TwoRegionPINN(nn.Module):
 
     def count_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+    @property
+    def num_networks(self) -> int:
+        return 1
 
 
 # ============================================================

@@ -108,6 +108,46 @@ def interface_loss(
     return sum(losses) / len(losses)
 
 
+def interface_loss_normal_single(
+    model: torch.nn.Module,
+    x_l: torch.Tensor, y_l: torch.Tensor, rid_l: torch.Tensor,
+    x_r: torch.Tensor, y_r: torch.Tensor, rid_r: torch.Tensor,
+    normal_axis: str,  # "x" for A_B (vertical seam); "y" for A_C / B_D (horizontal)
+) -> torch.Tensor:
+    """单条 seam 两侧法向导数连续：mean((∂T/∂n)_l - (∂T/∂n)_r)²
+
+    对应论文 §3.3 Eq.16 L_traction 的 Laplace 降维（t = σ·n → ∂T/∂n）。
+    """
+    x_l = x_l.detach().requires_grad_(True)
+    y_l = y_l.detach().requires_grad_(True)
+    x_r = x_r.detach().requires_grad_(True)
+    y_r = y_r.detach().requires_grad_(True)
+    T_l = model(x_l, y_l, rid_l)
+    T_r = model(x_r, y_r, rid_r)
+    if normal_axis == "x":
+        dT_dn_l = torch.autograd.grad(T_l.sum(), x_l, create_graph=True)[0]
+        dT_dn_r = torch.autograd.grad(T_r.sum(), x_r, create_graph=True)[0]
+    elif normal_axis == "y":
+        dT_dn_l = torch.autograd.grad(T_l.sum(), y_l, create_graph=True)[0]
+        dT_dn_r = torch.autograd.grad(T_r.sum(), y_r, create_graph=True)[0]
+    else:
+        raise ValueError(f"normal_axis must be 'x' or 'y', got {normal_axis!r}")
+    return F.mse_loss(dT_dn_l, dT_dn_r)
+
+
+def interface_loss_normal(
+    model: torch.nn.Module,
+    ifaces: Dict[str, Tuple],
+) -> torch.Tensor:
+    """3 条缝合 seam 法向连续（论文 L_traction 的 Laplace 降维）"""
+    losses_list = [
+        interface_loss_normal_single(model, *ifaces["A_B"], normal_axis="x"),
+        interface_loss_normal_single(model, *ifaces["A_C"], normal_axis="y"),
+        interface_loss_normal_single(model, *ifaces["B_D"], normal_axis="y"),
+    ]
+    return sum(losses_list) / len(losses_list)
+
+
 # ============================================================
 # 3. 外边界 Dirichlet 损失（Huber）
 # ============================================================
@@ -200,6 +240,7 @@ class LossWeights:
     """
     lambda_pde: float = 100.0
     lambda_interface: float = 10.0
+    lambda_interface_normal: float = 1.0  # L_traction 降维（论文 0.8e-6；Laplace 量级 1.0+）
     lambda_bc: float = 1.0
     lambda_neumann_crack: float = 0.05  # Neumann 量级 ~50，调小避免主导
     lambda_smooth: float = 0.0  # 默认关闭（Hessian 计算开销大且不稳）
@@ -233,6 +274,7 @@ class LossAggregator:
 
         # 2. Interface（3 条 seam）
         L_i = interface_loss(model, batch["interface"])
+        L_tn = interface_loss_normal(model, batch["interface"])
 
         # 3. Dirichlet BC（外边界）
         bd = batch["boundary"]
@@ -264,6 +306,7 @@ class LossAggregator:
         total = (
             self.w.lambda_pde * L_p
             + self.w.lambda_interface * L_i
+            + self.w.lambda_interface_normal * L_tn
             + self.w.lambda_bc * L_b
             + self.w.lambda_neumann_crack * L_n
             + self.w.lambda_smooth * L_s
@@ -272,6 +315,7 @@ class LossAggregator:
         comps = {
             "pde": float(L_p.item()),
             "iface": float(L_i.item()),
+            "tnormal": float(L_tn.item()),
             "bc": float(L_b.item()),
             "neumann": float(L_n.item()),
             "smooth": float(L_s.item()),

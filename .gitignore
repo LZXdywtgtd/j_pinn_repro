@@ -36,6 +36,9 @@ logs/figures/*
 # 参考论文 PDF 通常体积大且存在版权问题，不入库；本地阅读即可
 docs/*.pdf
 docs/**/*.pdf
+# 论文 OCR 中间产物（agent 调研生成，非文档）
+docs/*.txt
+docs/**/*.txt
 !docs/.gitkeep
 
 # === Python 缓存（递归匹配所有子目录） ===

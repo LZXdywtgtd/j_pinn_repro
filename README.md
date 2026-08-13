@@ -1,6 +1,6 @@
 # J-PINN Reproduction (2D Thermal Field)
 
-复现论文《J-PINN: Adaptive domain-decomposed physics-informed neural network…》(Materials & Design 2026, j.matdes.2026.116567) 的核心架构与算法思想。
+复现论文《J-PINN: A domain-decomposed physics-informed neural network framework for kinematic field reconstruction in fracture mechanics》(Materials & Design 2026, j.matdes.2026.116567) 的核心架构与算法思想。
 
 ## 论文 → 降维映射
 
@@ -88,7 +88,7 @@ j_pinn_repro/
 
 ```bibtex
 @article{stamatelatos2026jpinn,
-  title={J-PINN: Adaptive domain-decomposed physics-informed neural network for fracture assessment},
+  title={J-PINN: A domain-decomposed physics-informed neural network framework for kinematic field reconstruction in fracture mechanics},
   author={Stamatelatos, K. and Kotsinis, G. and Binsfeld, L. and Loutas, T.},
   journal={Materials \& Design},
   year={2026},
