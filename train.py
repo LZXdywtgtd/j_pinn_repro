@@ -33,6 +33,17 @@ if CURRENT_DIR not in sys.path:
 from data.dataset import ThermalDataset
 from losses import LossAggregator, LossWeights
 from models.pinn_core import build_model
+from utils_console import (
+    print_info, print_warning, print_error, print_success,
+    print_title, print_result, print_header,
+)
+from utils_tee_eta import Tee, ETAEstimator
+
+
+def datetime_now() -> str:
+    """ISO 8601 时间戳（CSV 用）"""
+    from datetime import datetime
+    return datetime.now().isoformat()
 
 
 # ============================================================
@@ -59,6 +70,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--log", type=str, default="logs/train_history.csv", help="训练历史 CSV")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--print_every", type=int, default=500, help="每 N 个 epoch 打印一行")
+    # v0.3 友好化日志
+    p.add_argument("--log_plain", action="store_true",
+                   help="禁用 ANSI 颜色 + Tee 日志文件（用于 CI / 重定向）")
     # 损失权重（默认值与 losses.LossWeights dataclass 保持一致；不一致会导致 CLI 静默覆盖）
     p.add_argument("--lambda_pde", type=float, default=100.0)
     p.add_argument("--lambda_interface", type=float, default=10.0)
@@ -91,14 +105,14 @@ def main() -> None:
 
     # 数据
     ds = ThermalDataset(npz_path=args.data, device=device, dtype=dtype)
-    print(f"数据加载完成：T ∈ [{ds.T_min:.4f}, {ds.T_max:.4f}]")
-    print(f"  域: [{ds.spec.x_min}, {ds.spec.x_max}] × [{ds.spec.y_min}, {ds.spec.y_max}]")
-    print(f"  裂纹段: x ∈ [{ds.spec.crack_x_min}, {ds.spec.crack_x_max}]")
+    print_info(f"数据加载完成：T ∈ [{ds.T_min:.4f}, {ds.T_max:.4f}]")
+    print_info(f"  域: [{ds.spec.x_min}, {ds.spec.x_max}] × [{ds.spec.y_min}, {ds.spec.y_max}]")
+    print_info(f"  裂纹段: x ∈ [{ds.spec.crack_x_min}, {ds.spec.crack_x_max}]")
 
     # 模型
     model = build_model(ablation=args.ablation, dtype=dtype).to(device)
     n_params = model.count_parameters()
-    print(f"模型参数量: {n_params}")
+    print_info(f"模型参数量: {n_params}")
     if args.ablation == "full":
         # 论文 §2.3 报告 71,712；本实现因 LayerNorm 略有差异，宽松判定
         assert 60_000 < n_params < 100_000, f"4 区域 JPINN 应约 7-9 万参数，实际 {n_params}"
@@ -120,18 +134,33 @@ def main() -> None:
     )
     agg = LossAggregator(weights)
 
-    # CSV 日志（沿用 v4:1429-1434 格式）
+    # v0.3 友好化：Tee（实时落盘）+ ETA 估算器
+    tee: Tee | None = None
+    if not args.log_plain:
+        log_dir = os.path.dirname(args.log) or "."
+        os.makedirs(log_dir, exist_ok=True)
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        log_path = os.path.join(log_dir, f"train_{args.ablation}_{ts}.log")
+        tee = Tee(log_path)
+        sys.stdout = tee
+        sys.stderr = tee
+        atexit.register(tee.close)
+
+    # CSV 日志（沿用 v4:1429-1434 + v0.3 扩展 14 列）
     os.makedirs(os.path.dirname(args.log) or ".", exist_ok=True)
+    task_id = f"jpinn_{args.ablation}_{time.strftime('%Y%m%d_%H%M%S')}"
     log_f = open(args.log, "w", newline="", encoding="utf-8")
     writer = csv.writer(log_f)
-    writer.writerow(
-        ["epoch", "total", "pde", "iface", "tnormal", "bc", "neumann", "smooth", "lr", "seconds"]
-    )
+    writer.writerow([
+        "timestamp", "task_id", "ablation", "epoch",
+        "total", "pde", "iface", "tnormal", "bc", "neumann", "smooth",
+        "lr", "seconds", "eta_seconds", "ema_s",
+    ])
 
     # ============================================================
     # 干跑验证（沿用 v4:1532-1680）
     # ============================================================
-    print("[干跑] 验证一次 forward+backward ...")
+    print_info("[干跑] 验证一次 forward+backward ...")
     try:
         batch = ds.get_collocation_batch(
             n_int_per_region=128,
@@ -147,21 +176,23 @@ def main() -> None:
         total.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
-        print(f"[干跑] 成功：total={total.item():.4e} pde={comps['pde']:.2e}")
+        print_info(f"[干跑] 成功：total={total.item():.4e} pde={comps['pde']:.2e}")
     except RuntimeError as e:
-        print(f"[干跑] 失败：{e}")
+        print_error(f"[干跑] 失败：{e}")
         log_f.close()
         raise
 
     # ============================================================
     # 主训练循环
     # ============================================================
-    print("开始训练 ...")
+    print_info("开始训练 ...")
     start = time.time()
     best_loss = float("inf")
     best_state: Optional[dict] = None
+    eta = ETAEstimator(total=args.epochs, alpha=0.3)
 
     for epoch in range(1, args.epochs + 1):
+        eta.start_epoch()
         epoch_t0 = time.time()
 
         # 重新采样（论文 §2.3：每 epoch 重新生成配点）
@@ -178,7 +209,7 @@ def main() -> None:
         total, comps = agg(model, batch)
 
         if torch.isnan(total):
-            print(f"  [WARN] epoch {epoch} 出现 NaN，跳过（保留上一参数）")
+            print_warning(f"epoch {epoch} 出现 NaN，跳过（保留上一参数）")
             continue
 
         # backward + 梯度裁剪（v4:1662）
@@ -189,9 +220,13 @@ def main() -> None:
 
         elapsed = time.time() - epoch_t0
         cur_lr = optimizer.param_groups[0]["lr"]
+        eta_info = eta.get_eta(epoch)
 
-        # 写入 CSV
+        # 写入 CSV（14 列）
         writer.writerow([
+            datetime_now().isoformat(),
+            task_id,
+            args.ablation,
             epoch,
             f"{comps['total']:.6e}",
             f"{comps['pde']:.6e}",
@@ -202,15 +237,19 @@ def main() -> None:
             f"{comps['smooth']:.6e}",
             f"{cur_lr:.6e}",
             f"{elapsed:.4f}",
+            f"{eta_info['eta_seconds']:.1f}",
+            f"{eta_info['ema']:.2f}",
         ])
 
-        # 控制台日志
+        # 控制台日志（带颜色 + ETA）
         if epoch == 1 or epoch % args.print_every == 0 or epoch == args.epochs:
-            print(
+            print_info(
                 f"[{epoch:>5d}/{args.epochs}] total={comps['total']:.4e}  "
                 f"pde={comps['pde']:.2e}  iface={comps['iface']:.2e}  "
                 f"bc={comps['bc']:.2e}  neum={comps['neumann']:.2e}  "
-                f"lr={cur_lr:.2e}  ({elapsed:.2f}s)"
+                f"lr={cur_lr:.2e}  ({elapsed:.2f}s)  "
+                f"ETA={eta_info['eta_str']}{eta_info['confidence']} "
+                f"finish={eta_info['finish_time']}"
             )
 
         # 最佳模型跟踪
@@ -219,8 +258,8 @@ def main() -> None:
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
 
     total_minutes = (time.time() - start) / 60.0
-    print(f"\n训练完成：{args.epochs} epoch，共 {total_minutes:.2f} 分钟")
-    print(f"最佳 total loss = {best_loss:.4e}")
+    print_info(f"\n训练完成：{args.epochs} epoch，共 {total_minutes:.2f} 分钟")
+    print_result("最佳 total loss", best_loss, fmt=".4e")
 
     # ============================================================
     # 保存 checkpoint（仿 v4:1071-1084 格式）
