@@ -70,24 +70,59 @@ class ThermalDataset:
 }
 ```
 
-### 1.3 `data.comsol_png_loader`（STUB）
+### 1.3 `data.comsol_png_loader`（v0.5 完整实现）
 
 ```python
 def load_comsol_png(
     png_path: str,
-    colorbar_range: tuple[float, float] = (1150.0, 1450.0),
-    crop_ratio: float = 0.70,
-    xy_extent: tuple[float, float, float, float] = (-0.005, 0.005, -0.005, 0.005),
-) -> np.ndarray:
-    raise NotImplementedError(...)
+    colorbar_range: Tuple[float, float],          # 必填无默认（用户约束）
+    *,
+    xy_extent: Tuple[float, float, float, float] = (0.0, 0.01, 0.0, 0.01),
+    multiplier: Optional[float] = None,
+    colormap_hint: str = "inferno",
+    expected_image_shape: Tuple[int, int] = (1500, 2000),
+    warn_uniform: bool = True,
+) -> Tuple[np.ndarray, dict]:
+    """单帧加载：读 PNG → 自动检测物理域/色标 → 像素 RGB → 温度 K。
+    Returns: (T_field (H', W') float64, meta dict)"""
 
 def load_comsol_scan_dir(
     scan_dir: str,
-    colorbar_range: tuple[float, float] = (1150.0, 1450.0),
-    crack_x_range: tuple[float, float] = (-0.5, 0.5),
+    colorbar_range: Tuple[float, float],
+    *,
+    field: Optional[str] = None,                 # None = 动态发现（用户 v0.5 决策）
+    subdir: Optional[str] = None,
+    file_pattern: Optional[str] = None,          # None = natural sort
+    xy_extent: Tuple[float, float, float, float] = (0.0, 0.01, 0.0, 0.01),
+    crack_x_range: Tuple[float, float] = (-0.5, 0.5),
+    crack_y_loc: float = 0.0,
+    region_split: str = "quadrant",
+    max_frames: Optional[int] = None,
+    multiplier: Optional[float] = None,
+    colormap_hint: str = "inferno",
 ) -> dict:
-    raise NotImplementedError(...)
+    """多扫描加载：读整个 温度/ 子目录所有 PNG → (N_frames, H, W) 序列。
+    返回 dict：x_grid, y_grid, T_grid(首帧2D), T_grid_volume(4D), T_smooth_grid,
+      region_id_grid, is_boundary_grid, is_crack_grid, meta_*, n_frames, frame_indices,
+      scan_dir, field"""
+
+def load_comsol_scan_dir_as_array(
+    scan_dir: str,
+    colorbar_range: Tuple[float, float],
+    *,
+    field: Optional[str] = None,
+    file_pattern: Optional[str] = None,
+    xy_extent: Tuple[float, float, float, float] = (0.0, 0.01, 0.0, 0.01),
+    multiplier: Optional[float] = None,
+    colormap_hint: str = "inferno",
+    max_frames: Optional[int] = None,
+) -> Tuple[np.ndarray, str, dict]:
+    """简洁形式：返回 (T_volume (N,H,W) float64, loaded_field_name, meta dict)"""
 ```
+
+**字段自动检测**（v0.5 用户决策，无硬编码优先级）：
+- `field=None`：扫描子目录数 0 → FileNotFoundError；1 个 → 加载该目录；多个 → 按字母序取第一个 + [INFO] 提示
+- `field="温度"`：严格查找；不存在 → FileNotFoundError
 
 ---
 

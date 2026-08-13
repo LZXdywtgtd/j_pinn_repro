@@ -6,6 +6,31 @@
 
 ---
 
+## [v0.5] - 2026-08-13
+
+### Added
+- **D1 COMSOL 多扫描 batch loader**：
+  - `load_comsol_scan_dir_as_array`：返回 `(T_volume (N,H,W) float64, loaded_field_name, meta)`（用户 v0.5 决策）
+  - `load_comsol_scan_dir` 保留完整 `T_grid_volume` 4D 序列（不再只返回首帧）
+  - 字段动态检测：`field=None` 时按子目录数自动选择（0→报错，1→加载，多→字母序第一个 + [INFO]）
+  - `field` 指定时严格查找，不存在抛 FileNotFoundError
+  - `_natural_sort_key`：按文件名数字 token 排序（温度001 < 温度010）
+  - `_auto_detect_subdir`：无硬编码优先级，基于实际目录结构
+- **测试**：`tests/test_comsol_png_loader.py` 扩展 10 个 D1 测试（数字排序/4D volume/首帧一致性/field 检测/max_frames/as_array/空目录/缺字段/多目录自动选/单色抑制）
+
+### Fixed
+- **P11 遗留性能 bug**：`_rgb_to_colorbar_position` 构造 `(H*W, H_cb, 3)` 距离矩阵 → 2000×1500 图 OOM（单帧 35.6s）
+  - 修复：色标下采样到 `min(n_levels, len(cb_rgb))`（默认 128）+ argmin 向量化
+- **P11 遗留检测 bug**：`_detect_physical_region` 把色标条纳入物理域（right 扩到色标右缘）
+  - 修复：用"最宽连续厚列块"（计数 > 0.5*height）区分物理域与窄色标带
+
+### Known Limitations
+- 训练结果（checkpoints/*.pt, logs/*.csv）不入仓
+- 测试耗时 ~116s（imageio 写 2000×1500 PNG 慢；可减小合成 PNG 尺寸加速）
+- `_detect_multiplier_from_ticks` 简化版返回 1.0 不 OCR（需用户传 multiplier 覆盖 ×10²）
+
+---
+
 ## [v0.4] - 2026-08-13
 
 ### Added

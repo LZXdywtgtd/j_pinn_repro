@@ -47,12 +47,14 @@ def _detect_physical_region(img: np.ndarray, white_threshold: int = 245) -> Tupl
 
     算法：
     - 找每行 / 每列非白色像素范围
-    - 取交集最密集区域（找有色域的方形 bounding box）
+    - 用"每列非白像素计数"区分物理域（宽方柱）与色标（窄竖条）
+      * 物理域列的计数 ≈ 物理域高度（大多数行非白）
+      * 色标列的计数 ≈ 色标高度（虽然也高，但宽度窄、且紧贴右缘）
+    - 取计数最大的连续列块作为物理域
     """
     H, W, _ = img.shape
     # 检测非白像素
     is_colored = np.any(img < white_threshold, axis=2)  # (H, W)
-    # 行 / 列的非白范围
     row_has_color = is_colored.any(axis=1)  # (H,)
     col_has_color = is_colored.any(axis=0)  # (W,)
     if not row_has_color.any() or not col_has_color.any():
@@ -60,10 +62,39 @@ def _detect_physical_region(img: np.ndarray, white_threshold: int = 245) -> Tupl
         h_lo, h_hi = int(H * 0.15), int(H * 0.85)
         w_lo, w_hi = int(W * 0.15), int(W * 0.85)
         return h_lo, h_hi, w_lo, w_hi
+
     rows_idx = np.where(row_has_color)[0]
-    cols_idx = np.where(col_has_color)[0]
     top, bottom = int(rows_idx.min()), int(rows_idx.max()) + 1
-    left, right = int(cols_idx.min()), int(cols_idx.max()) + 1
+
+    # 每列非白像素计数
+    col_count = is_colored.sum(axis=0)  # (W,)
+    cols_idx = np.where(col_has_color)[0]
+    if len(cols_idx) == 0:
+        return top, bottom, int(W * 0.15), int(W * 0.85)
+
+    # 区分物理域（宽方柱）与色标（窄竖条）：
+    # 物理域列计数 ≈ height（几乎所有行非白），且连续宽度大
+    # 色标列计数也可能 = height，但宽度窄（~20px）
+    height = bottom - top
+    # 取"计数 > 0.5*height"的连续列块
+    thick = col_count > 0.5 * height  # (W,)
+    # 找最宽的连续 thick 块 = 物理域
+    max_start, max_end, cur_start = -1, -1, -1
+    for c in range(W):
+        if thick[c]:
+            if cur_start < 0:
+                cur_start = c
+        else:
+            if cur_start >= 0:
+                if c - cur_start > max_end - max_start:
+                    max_start, max_end = cur_start, c
+                cur_start = -1
+    if cur_start >= 0 and W - cur_start > max_end - max_start:
+        max_start, max_end = cur_start, W
+    if max_start >= 0:
+        left, right = max_start, max_end
+    else:
+        left, right = int(cols_idx.min()), int(cols_idx.max()) + 1
     return top, bottom, left, right
 
 
@@ -121,19 +152,33 @@ def _sample_colorbar(img: np.ndarray,
 
 
 def _rgb_to_colorbar_position(
-    pixel_rgb: np.ndarray, cb_rgb: np.ndarray,
+    pixel_rgb: np.ndarray, cb_rgb: np.ndarray, n_levels: int = 128,
 ) -> np.ndarray:
     """每像素找色标最近邻 → 位置 p ∈ [0, 1]
 
     pixel_rgb: (..., 3)
     cb_rgb: (H, 3)
     Returns: (...,) 位置 p
+
+    v0.5 性能修复：色标先下采样到 n_levels（默认 128），
+    避免构造 (H*W, H_cb, 3) 的巨型距离矩阵（P11 遗留 bug，
+    2000x1500 图会 OOM）。
     """
-    # 距离矩阵 (..., H)
-    diff = pixel_rgb.astype(np.float64)[..., None, :] - cb_rgb[None, ...]  # (..., H, 3)
-    dist_sq = (diff ** 2).sum(axis=-1)  # (..., H)
-    p = dist_sq.argmin(axis=-1) / max(len(cb_rgb) - 1, 1)
-    return p
+    # 色标下采样（保持 top->bottom 顺序）；n_levels 不超过 cb_rgb 高度
+    h_cb = len(cb_rgb)
+    n_levels = min(n_levels, h_cb)
+    if h_cb > n_levels:
+        idx = np.linspace(0, h_cb - 1, n_levels).astype(int)
+        cb_rgb = cb_rgb[idx]  # (n_levels, 3)
+
+    # 向量化最近邻：对每个像素在 n_levels 个色标中找最近
+    # pixel_rgb: (..., 3) -> 展开为 (N, 3)
+    flat = pixel_rgb.astype(np.float64).reshape(-1, 3)  # (N, 3)
+    # diff: (N, n_levels, 3)
+    diff = flat[:, None, :] - cb_rgb[None, :, :]  # (N, n_levels, 3)
+    dist_sq = (diff ** 2).sum(axis=-1)  # (N, n_levels)
+    p_flat = dist_sq.argmin(axis=-1) / max(n_levels - 1, 1)  # (N,)
+    return p_flat.reshape(pixel_rgb.shape[:-1])
 
 
 def _detect_multiplier_from_ticks(
@@ -265,13 +310,16 @@ def load_comsol_scan_dir(
     scan_dir: str,
     colorbar_range: Tuple[float, float],
     *,
-    subdir: str = "温度",
+    field: Optional[str] = None,
+    subdir: Optional[str] = None,
+    file_pattern: Optional[str] = None,
     xy_extent: Tuple[float, float, float, float] = (0.0, 0.01, 0.0, 0.01),
     crack_x_range: Tuple[float, float] = (-0.5, 0.5),
     crack_y_loc: float = 0.0,
     region_split: str = "quadrant",
-    filename_pattern: str = r"温度(\d+)\.png$",
     max_frames: Optional[int] = None,
+    multiplier: Optional[float] = None,
+    colormap_hint: str = "inferno",
 ) -> dict:
     """
     加载一个扫描目录下所有 PNG，归一化到 [-1, 1]^2，与合成数据 schema 对齐。
@@ -279,30 +327,60 @@ def load_comsol_scan_dir(
     Args:
         scan_dir: 扫描目录（如 D:/.../参数化扫描1）
         colorbar_range: (T_min, T_max) 必填
-        subdir: 子目录名（"温度"/"d_hist"/"应力"）
-        xy_extent: 物理域范围
+        field: 字段名（"温度"/"d_hist"/"应力"）；None = 自动发现
+        subdir: 显式覆盖 field（如果 subdir 存在则优先）
+        file_pattern: PNG 文件名 regex（None = 通用 natural sort）
+        xy_extent: 物理域范围（m）
         crack_x_range / crack_y_loc: 裂纹段定义（生成 region_id 用）
         region_split: "quadrant"（按 (x, y) 象限分 A/B/C/D）或 "uniform"（全 0）
-        filename_pattern: PNG 文件名 regex
         max_frames: 最多加载多少帧（None = 全部）
+        multiplier: 乘数（覆盖 colorbar 自动检测）
+        colormap_hint: 色标 hint
 
     Returns:
-        dict with keys: x_grid, y_grid, T_grid, T_smooth_grid, region_id_grid,
-                       is_boundary_grid, is_crack_grid, meta
+        dict with keys: x_grid, y_grid, T_grid, T_grid_volume, T_smooth_grid,
+                       region_id_grid, is_boundary_grid, is_crack_grid,
+                       meta_x_min/max, meta_y_min/max, meta_crack_x_min/max, meta_N,
+                       meta_T_min, meta_T_max, n_frames, frame_indices, scan_dir, field
     """
-    png_dir = os.path.join(scan_dir, subdir)
+    # 子目录解析（field auto-detect：无硬编码优先级，基于实际目录）
+    actual_subdir = subdir if subdir is not None else _auto_detect_subdir(scan_dir, field)
+    png_dir = os.path.join(scan_dir, actual_subdir)
     if not os.path.isdir(png_dir):
         raise FileNotFoundError(f"子目录不存在: {png_dir}")
 
     # 列举 PNG 文件
-    files = []
-    for fname in sorted(os.listdir(png_dir)):
-        m = re.match(filename_pattern, fname)
-        if m:
-            files.append((int(m.group(1)), fname))
+    if file_pattern is not None:
+        # 显式 regex 模式
+        files = []
+        for fname in sorted(os.listdir(png_dir)):
+            if not fname.lower().endswith(".png"):
+                continue
+            m = re.match(file_pattern, fname)
+            if m:
+                files.append((int(m.group(1)), fname))
+    else:
+        # 通用 natural sort（按文件名中数字 token 排序，避开 002/010 字典序问题）
+        files = []
+        for fname in sorted(os.listdir(png_dir), key=_natural_sort_key):
+            if not fname.lower().endswith(".png"):
+                continue
+            m = re.search(r"(\d+)", fname)
+            if m:
+                files.append((int(m.group(1)), fname))
     if not files:
-        raise ValueError(f"未匹配到 PNG（pattern={filename_pattern}）在 {png_dir}")
-    files.sort()
+        raise ValueError(
+            f"未匹配到 PNG（pattern={file_pattern or 'natural sort'}）在 {png_dir}"
+        )
+    # 按数字 index 升序 + 去重（保留首次出现的）
+    seen = set()
+    unique_files = []
+    for idx, fname in files:
+        if idx in seen:
+            continue
+        seen.add(idx)
+        unique_files.append((idx, fname))
+    files = unique_files
     if max_frames is not None:
         files = files[:max_frames]
 
@@ -321,13 +399,15 @@ def load_comsol_scan_dir(
 
     # 4D 数组（帧, H, W）
     n_frames = len(files)
-    T_grid = np.zeros((n_frames, H_phys, W_phys), dtype=np.float64)
-    T_grid[0] = T0
+    T_grid_volume = np.zeros((n_frames, H_phys, W_phys), dtype=np.float64)
+    T_grid_volume[0] = T0
     for i, (_, fname) in enumerate(files[1:], start=1):
-        T_grid[i], _ = load_comsol_png(
+        T_grid_volume[i], _ = load_comsol_png(
             os.path.join(png_dir, fname),
             colorbar_range=colorbar_range,
             xy_extent=xy_extent,
+            multiplier=multiplier,
+            colormap_hint=colormap_hint,
             warn_uniform=False,  # 仅警告第一帧
         )
 
@@ -359,13 +439,13 @@ def load_comsol_scan_dir(
     )
 
     # T_smooth_grid：真实数据无法解析调和分量，留 NaN
-    T_smooth_grid = np.full_like(T_grid[0], np.nan)
+    T_smooth_grid = np.full_like(T_grid_volume[0], np.nan)
 
-    # 单帧选择：第一帧
     return {
         "x_grid": X,  # (H, W) 与 ThermalDataset 一致
         "y_grid": Y,
-        "T_grid": T_grid[0],  # 当前默认第一帧
+        "T_grid": T_grid_volume[0],  # 第一帧（backward-compat 单帧接口）
+        "T_grid_volume": T_grid_volume,  # 完整 4D 序列（v0.5 新增）
         "T_smooth_grid": T_smooth_grid,
         "region_id_grid": region_id,
         "is_boundary_grid": is_boundary,
@@ -381,4 +461,104 @@ def load_comsol_scan_dir(
         "meta_T_max": float(meta0["T_max"]),
         "n_frames": n_frames,
         "frame_indices": [f[0] for f in files],
+        "scan_dir": scan_dir,
+        "field": actual_subdir,
     }
+
+
+def _natural_sort_key(filename: str) -> tuple:
+    """
+    自然排序键：把文件名按"数字/非数字"切分，数字部分转 int 参与比较。
+    例: 温度001.png → ('温度', 1, '.png') < 温度002.png → ('温度', 2, '.png')
+    """
+    parts = re.split(r"(\d+)", filename)
+    return tuple(int(p) if p.isdigit() else p for p in parts)
+
+
+def _auto_detect_subdir(scan_dir: str, preferred: Optional[str] = None) -> str:
+    """
+    动态发现字段子目录（无硬编码优先级列表）。
+
+    逻辑（用户 v0.5 决策）：
+    - preferred 为 None：
+      * 子目录数 == 0 → FileNotFoundError
+      * 子目录数 == 1 → 返回该唯一目录
+      * 子目录数 > 1  → 按字母序取第一个 + [INFO] 提示
+    - preferred 指定：
+      * 严格查找该目录，存在则返回；不存在则 FileNotFoundError
+
+    返回实际加载的目录名（loaded_field_name）。
+    """
+    try:
+        entries = sorted(os.listdir(scan_dir))
+    except OSError as e:
+        raise FileNotFoundError(f"scan_dir 不可访问: {scan_dir}: {e}")
+
+    subdirs = [e for e in entries if os.path.isdir(os.path.join(scan_dir, e))]
+
+    if preferred is not None:
+        if preferred in subdirs:
+            return preferred
+        raise FileNotFoundError(
+            f"field='{preferred}' 指定的子目录不存在。"
+            f"scan_dir={scan_dir} 实际子目录: {subdirs or '(无)'}"
+        )
+
+    if len(subdirs) == 0:
+        raise FileNotFoundError(f"scan_dir={scan_dir} 下没有任何子目录。")
+    if len(subdirs) == 1:
+        print(f"[INFO] 自动加载的字段为：{subdirs[0]}")
+        return subdirs[0]
+    # 多个 → 字母序第一个
+    print(f"[INFO] 检测到多个字段文件夹 {subdirs}，默认选择第一个：{subdirs[0]}"
+          f"（如需指定，请提供 field 参数）")
+    return subdirs[0]
+
+
+def load_comsol_scan_dir_as_array(
+    scan_dir: str,
+    colorbar_range: Tuple[float, float],
+    *,
+    field: Optional[str] = None,
+    file_pattern: Optional[str] = None,
+    xy_extent: Tuple[float, float, float, float] = (0.0, 0.01, 0.0, 0.01),
+    multiplier: Optional[float] = None,
+    colormap_hint: str = "inferno",
+    max_frames: Optional[int] = None,
+) -> Tuple[np.ndarray, str, dict]:
+    """
+    简洁形式：直接返回 (T_volume, loaded_field_name, meta)。
+
+    Returns:
+        T_volume: np.ndarray (N_frames, H, W) float64
+        loaded_field_name: 实际加载的子目录名
+        meta: dict 含 n_frames, frame_indices, scan_dir, field, xy_extent,
+              T_min, T_max, pixel_shape, colorbar_range
+    """
+    data = load_comsol_scan_dir(
+        scan_dir,
+        colorbar_range,
+        field=field,
+        file_pattern=file_pattern,
+        xy_extent=xy_extent,
+        multiplier=multiplier,
+        colormap_hint=colormap_hint,
+        max_frames=max_frames,
+    )
+    meta = {
+        "n_frames": data["n_frames"],
+        "frame_indices": data["frame_indices"],
+        "scan_dir": data["scan_dir"],
+        "field": data["field"],
+        "xy_extent": (
+            data["meta_x_min"],
+            data["meta_x_max"],
+            data["meta_y_min"],
+            data["meta_y_max"],
+        ),
+        "T_min": data["meta_T_min"],
+        "T_max": data["meta_T_max"],
+        "pixel_shape": (data["T_grid_volume"].shape[1], data["T_grid_volume"].shape[2]),
+        "colorbar_range": colorbar_range,
+    }
+    return data["T_grid_volume"], data["field"], meta
