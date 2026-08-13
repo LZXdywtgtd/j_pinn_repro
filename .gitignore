@@ -1,0 +1,83 @@
+# ============================================================
+# J-PINN-Repro .gitignore
+# ============================================================
+# 生成时间: 2026-08-13
+# 用途: 排除数据、模型产物、日志、配置等敏感/重型文件
+# 风格参考 projects/pe_mmnet/project_v4/.gitignore
+# ============================================================
+# 注：本仓库遵循"源码 + 配置进版本，数据 + 模型 + 日志不进版本"
+#      .gitkeep 文件用于保留空目录结构
+# ============================================================
+
+# === 数据与产物 ===
+# 合成/外部数据文件（避免误传仓库）
+data/*.npz
+data/*.png
+data/*.npz.gz
+data/raw/*
+data/examples/*
+!data/raw/.gitkeep
+!data/examples/.gitkeep
+
+# 训练产物（模型权重）
+# 只忽略内容，不忽略目录本身（让 .gitkeep 能入库）
+checkpoints/*
+!checkpoints/.gitkeep
+
+# 训练日志与可视化
+logs/*.csv
+logs/*.log
+logs/*.txt
+logs/figures/*
+!logs/figures/.gitkeep
+!logs/.gitkeep
+
+# === 文档/论文（避免仓库臃肿 + 学术版权） ===
+# 参考论文 PDF 通常体积大且存在版权问题，不入库；本地阅读即可
+docs/*.pdf
+docs/**/*.pdf
+!docs/.gitkeep
+
+# === Python 缓存（递归匹配所有子目录） ===
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.py.bak
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# === 本地配置 ===
+config.local.json
+config.local.*
+.env
+.env.*
+*.local
+
+# === 构建产物 ===
+build/
+dist/
+*.whl
+*.tar.gz
+*.zip
+
+# === IDE / 编辑器 ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+.DS_Store
+Thumbs.db
+
+# === 临时文件 ===
+*.tmp
+*.bak
+*.swp
+*.orig
+*.rej
+nul
+nohup.out
