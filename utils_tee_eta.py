@@ -143,3 +143,66 @@ class ETAEstimator:
             "confidence": confidence,
             "remaining_epochs": remaining,
         }
+
+
+# =============================================================================
+# P7 训练时间估算器（仿 v4 run_train.py:954-1063）
+# =============================================================================
+def estimate_training_time(
+    model, ds, agg, optimizer, device, args, scheduler=None,
+    n_warmup_epochs: int = 2,
+    overhead_factor: float = 1.2,
+    early_stop_factor: float = 0.85,
+) -> tuple:
+    """
+    跑 n_warmup_epochs 个小 batch epoch 估算单 epoch 耗时与总训练时长。
+
+    快照并恢复 model/optimizer/scheduler 状态（估算不应污染正式训练）。
+
+    Args:
+        model, ds, agg, optimizer, device, args: 与主循环相同的对象
+        scheduler: 可选，有则快照/恢复
+        n_warmup_epochs: 预跑 epoch 数
+        overhead_factor / early_stop_factor: v4 同款系数
+
+    Returns:
+        (avg_time_s, estimated_total_minutes)
+    """
+    import copy
+    import time as _time
+
+    # 快照状态
+    model_state = {k: v.clone() for k, v in model.state_dict().items()}
+    optimizer_state = copy.deepcopy(optimizer.state_dict())
+    scheduler_state = copy.deepcopy(scheduler.state_dict()) if scheduler is not None else None
+
+    try:
+        times = []
+        for _ in range(n_warmup_epochs):
+            t0 = _time.time()
+            batch = ds.get_collocation_batch(
+                n_int_per_region=128,
+                n_bc_per_edge=16,
+                n_iface_per_seam=8,
+                n_crack_per_side=8,
+                seed=args.seed,
+            )
+            optimizer.zero_grad()
+            total, _ = agg(model, batch, current_epoch=0)
+            total.backward()
+            import torch
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
+            times.append(_time.time() - t0)
+
+        avg_time = times[-1] if times else 0.0
+        estimated_total_s = avg_time * args.epochs * overhead_factor * early_stop_factor
+        return avg_time, estimated_total_s / 60.0
+    finally:
+        # 恢复状态（估算不污染正式训练）
+        model.load_state_dict(model_state)
+        optimizer.load_state_dict(optimizer_state)
+        if scheduler is not None and scheduler_state is not None:
+            scheduler.load_state_dict(scheduler_state)

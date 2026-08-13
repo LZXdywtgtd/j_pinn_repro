@@ -39,7 +39,7 @@ from utils_console import (
     print_info, print_warning, print_error, print_success,
     print_title, print_result, print_header,
 )
-from utils_tee_eta import Tee, ETAEstimator
+from utils_tee_eta import Tee, ETAEstimator, estimate_training_time
 
 
 def datetime_now() -> str:
@@ -252,6 +252,19 @@ def main() -> None:
         scheduler.load_state_dict(dry_scheduler_state)
 
     # ============================================================
+    # 预运行时间估算（P7；仿 v4:954-1063）
+    # ============================================================
+    if args.epochs >= 10:
+        try:
+            est_avg, est_total_min = estimate_training_time(
+                model, ds, agg, optimizer, device, args, scheduler=scheduler
+            )
+            print_info(f"[预估] 单 epoch ~{est_avg:.2f}s，"
+                       f"总训练时间 ~{est_total_min:.1f} 分钟（~{est_total_min/60:.1f} 小时）")
+        except Exception as e:
+            print_warning(f"[预估] 估算失败（继续训练）：{e}")
+
+    # ============================================================
     # 主训练循环
     # ============================================================
     print_info("开始训练 ...")
@@ -348,6 +361,7 @@ def main() -> None:
         scheduler.step()
 
         elapsed = time.time() - epoch_t0
+        eta.update(elapsed)  # P7 修复：之前从未调用，ETA 恒为 ?/0
         cur_lr = optimizer.param_groups[0]["lr"]
         eta_info = eta.get_eta(epoch)
 
