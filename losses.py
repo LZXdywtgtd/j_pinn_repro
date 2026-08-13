@@ -167,13 +167,16 @@ def bc_loss_dirichlet(
     region_id_b: torch.Tensor,
     T_target: torch.Tensor,
     huber_beta: float = 0.1,
+    loss_type: str = "huber",
 ) -> torch.Tensor:
     """
-    外边界硬约束（论文 §2.3 L_bc，Huber 增强鲁棒性）。
-    smooth_l1_loss 在 |r| <= beta 时退化为 0.5 r²/beta，
-    在 |r| > beta 时退化为 |r| - 0.5*beta。
+    外边界硬约束（论文 §2.3 L_bc）。
+    - loss_type="huber"（默认）：smooth_l1_loss，|r|<=beta 退化为 0.5r²/beta，否则 |r|-0.5beta
+    - loss_type="mse"：F.mse_loss（论文 Eq.18 对合成 FEM 数据用 MSE）
     """
     T_pred = model(x_b, y_b, region_id_b)
+    if loss_type == "mse":
+        return F.mse_loss(T_pred, T_target)
     return F.smooth_l1_loss(T_pred, T_target, beta=huber_beta)
 
 
@@ -278,8 +281,10 @@ class LossAggregator:
         weights: LossWeights | None = None,
         outlier_cfg: Optional[OutlierConfig] = None,
         device: torch.device | str = "cpu",
+        bc_loss_type: str = "huber",
     ) -> None:
         self.w = weights or LossWeights()
+        self.bc_loss_type = bc_loss_type  # P12：mse / huber
         self.outlier: Optional[BoundaryOutlierTracker] = None
         if outlier_cfg is not None and outlier_cfg.enabled:
             self.outlier = BoundaryOutlierTracker(
@@ -310,7 +315,8 @@ class LossAggregator:
             + ((bd["x"] >= 0) & (bd["y"] < 0)).long() * 3
         )
         L_b = bc_loss_dirichlet(
-            model, bd["x"], bd["y"], rid_b.to(bd["x"].device), bd["T_target"]
+            model, bd["x"], bd["y"], rid_b.to(bd["x"].device), bd["T_target"],
+            loss_type=self.bc_loss_type,
         )
 
         # P2：Z-score 边界去噪（可选）
@@ -336,6 +342,7 @@ class LossAggregator:
                     bd["x"][active_mask], bd["y"][active_mask],
                     rid_b.to(bd["x"].device)[active_mask],
                     bd["T_target"][active_mask],
+                    loss_type=self.bc_loss_type,
                 )
                 # 论文 Table 5：|A| 归一化（N_total / N_active）
                 L_b = L_b_raw * (n_total / n_active)

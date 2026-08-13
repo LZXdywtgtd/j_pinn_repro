@@ -88,6 +88,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lambda_bc", type=float, default=1.0)
     p.add_argument("--lambda_neumann_crack", type=float, default=0.05)
     p.add_argument("--lambda_smooth", type=float, default=0.0)
+    # P12 BC loss 类型切换
+    p.add_argument("--bc_loss_type", type=str, choices=["mse", "huber"],
+                   default="huber", help="外边界损失类型：mse（论文 Eq.18）/ huber（Eq.19）")
     # P2 Z-score 边界去噪（v0.5）
     p.add_argument("--outlier_enabled", action="store_true",
                    help="启用 Z-score 边界去噪（论文 §3.3 Eq.19-20）")
@@ -199,7 +202,8 @@ def main() -> None:
             f"[P2] Z-score 边界去噪启用：burnin={args.outlier_burnin} "
             f"δ={args.outlier_delta} α={args.outlier_ema_alpha}"
         )
-    agg = LossAggregator(weights, outlier_cfg=outlier_cfg, device=device)
+    agg = LossAggregator(weights, outlier_cfg=outlier_cfg, device=device,
+                         bc_loss_type=args.bc_loss_type)
 
     # v0.3 友好化：Tee（实时落盘）+ ETA 估算器
     tee: Tee | None = None
