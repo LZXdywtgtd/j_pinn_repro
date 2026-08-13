@@ -52,6 +52,10 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 @dataclass
 class ThermalDataset:
     npz_path: str = os.path.join(CURRENT_DIR, "synthetic_thermal.npz")
+    comsol_dir: str = ""  # source="comsol_png" 时必填
+    comsol_colorbar_range: tuple[float, float] = (293.15, 1431.15)  # COMSOL K
+    comsol_xy_extent: tuple[float, float, float, float] = (0.0, 0.01, 0.0, 0.01)
+    comsol_multiplier: float = 1.0  # COMSOL 色标乘数（如 ×10² → 100）
     source: str = "synthetic"  # "synthetic" | "comsol_png"
     device: torch.device | str = "cpu"
     dtype: torch.dtype = torch.float64
@@ -65,11 +69,38 @@ class ThermalDataset:
         if self.source == "synthetic":
             self._load_synthetic()
         elif self.source == "comsol_png":
-            raise NotImplementedError(
-                "comsol_png 数据源尚未实现，请先用 source='synthetic'。"
-            )
+            self._load_comsol_png()
         else:
             raise ValueError(f"Unknown source: {self.source}")
+
+    def _load_comsol_png(self) -> None:
+        from comsol_png_loader import load_comsol_scan_dir  # 局部导入避免循环
+        if not self.comsol_dir:
+            raise ValueError(
+                "source='comsol_png' 时必须传 comsol_dir"
+                "（如 D:/team_project/simulation/参考输入/参数化扫描1）"
+            )
+        data = load_comsol_scan_dir(
+            scan_dir=self.comsol_dir,
+            colorbar_range=self.comsol_colorbar_range,
+            xy_extent=self.comsol_xy_extent,
+        )
+        self.T_min = float(data["T_grid"].min())
+        self.T_max = float(data["T_grid"].max())
+        # 注意：COMSOL 物理域是 [0, 0.01]×[0, 0.01]，不是 [-1, 1]²
+        # 但 ThermalDataset.spec 期望 [-1, 1]² 归一化（与 utils.DEFAULT_DOMAIN 一致）
+        # 解决：把物理域通过 normalize 映射到 [-1, 1]²
+        x_min_phys, x_max_phys = self.comsol_xy_extent[0], self.comsol_xy_extent[1]
+        y_min_phys, y_max_phys = self.comsol_xy_extent[2], self.comsol_xy_extent[3]
+        self.spec = DomainSpec(
+            x_min=x_min_phys, x_max=x_max_phys,
+            y_min=y_min_phys, y_max=y_max_phys,
+            crack_x_min=-0.5, crack_x_max=0.5,  # 与合成数据一致（论文保形）
+        )
+        # 但 utils.sample_* 默认用 DEFAULT_DOMAIN 的 [-1, 1]
+        # → 需要在 sample 时用此 spec（v0.3 已实现，get_collocation_batch 传 spec=self.spec）
+        # 注：v0.3 训练时若要切换到 comsol_png，
+        # 还需要把内部坐标归一化为 [-1, 1]²（v0.4 后续）
 
     def _load_synthetic(self) -> None:
         if not os.path.exists(self.npz_path):
