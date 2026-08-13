@@ -238,15 +238,24 @@ class TwoRegionPINN(nn.Module):
 # ============================================================
 # 模型工厂
 # ============================================================
-def build_model(ablation: str = "full", dtype: torch.dtype = torch.float64) -> nn.Module:
+def build_model(
+    ablation: str = "full",
+    dtype: torch.dtype = torch.float64,
+    hidden: int = 64,
+    n_hidden_layers: int = 4,
+) -> nn.Module:
     """
     按消融标签构建模型。
     ablation ∈ {"full", "two", "single"} → 分别 JPINN / TwoRegionPINN / SingleRegionPINN
+
+    P6：hidden / n_hidden_layers 透传给 JPINN/TwoRegionPINN（架构 sweep 用）。
+    注意：SingleRegionPINN 用自己的默认（hidden=128, n_hidden_layers=5），
+    不随 hidden/n_hidden_layers 变化（sweep 以 full 为论文 §4.2 目标）。
     """
     if ablation == "full":
-        return JPINN(dtype=dtype)
+        return JPINN(dtype=dtype, hidden=hidden, n_hidden_layers=n_hidden_layers)
     if ablation == "two":
-        return TwoRegionPINN(dtype=dtype)
+        return TwoRegionPINN(dtype=dtype, hidden=hidden, n_hidden_layers=n_hidden_layers)
     if ablation == "single":
         return SingleRegionPINN(dtype=dtype)
     raise ValueError(f"Unknown ablation: {ablation}")

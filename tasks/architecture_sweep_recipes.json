@@ -1,0 +1,31 @@
+{
+  "_comment": "J-PINN 架构 sweep 配方（论文 §4.2 Table 1）。widths {8,16,32,64} × depths {1..5} = 20 架构。",
+  "_schema": "[{id, name, args, description, expected_n_params, depends_on}]",
+  "_note": "用 --scheduler loss_prop 保证与论文 §3.4 一致；epochs 用 1000 快速筛（完整用 5000）",
+
+  "tasks": [
+    {"id": "sweep-w8-d1", "name": "w8×d1", "args": {"--ablation": "full", "--hidden": 8, "--n_hidden_layers": 1, "--out": "checkpoints/sweep/w8_d1.pt", "--log": "logs/sweep/w8_d1.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "论文 Table1 最小架构", "depends_on": []},
+    {"id": "sweep-w8-d2", "name": "w8×d2", "args": {"--ablation": "full", "--hidden": 8, "--n_hidden_layers": 2, "--out": "checkpoints/sweep/w8_d2.pt", "--log": "logs/sweep/w8_d2.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []},
+    {"id": "sweep-w8-d3", "name": "w8×d3", "args": {"--ablation": "full", "--hidden": 8, "--n_hidden_layers": 3, "--out": "checkpoints/sweep/w8_d3.pt", "--log": "logs/sweep/w8_d3.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []},
+    {"id": "sweep-w8-d4", "name": "w8×d4", "args": {"--ablation": "full", "--hidden": 8, "--n_hidden_layers": 4, "--out": "checkpoints/sweep/w8_d4.pt", "--log": "logs/sweep/w8_d4.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []},
+    {"id": "sweep-w8-d5", "name": "w8×d5", "args": {"--ablation": "full", "--hidden": 8, "--n_hidden_layers": 5, "--out": "checkpoints/sweep/w8_d5.pt", "--log": "logs/sweep/w8_d5.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []},
+
+    {"id": "sweep-w16-d1", "name": "w16×d1", "args": {"--ablation": "full", "--hidden": 16, "--n_hidden_layers": 1, "--out": "checkpoints/sweep/w16_d1.pt", "--log": "logs/sweep/w16_d1.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []},
+    {"id": "sweep-w16-d2", "name": "w16×d2", "args": {"--ablation": "full", "--hidden": 16, "--n_hidden_layers": 2, "--out": "checkpoints/sweep/w16_d2.pt", "--log": "logs/sweep/w16_d2.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []},
+    {"id": "sweep-w16-d3", "name": "w16×d3", "args": {"--ablation": "full", "--hidden": 16, "--n_hidden_layers": 3, "--out": "checkpoints/sweep/w16_d3.pt", "--log": "logs/sweep/w16_d3.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []},
+    {"id": "sweep-w16-d4", "name": "w16×d4", "args": {"--ablation": "full", "--hidden": 16, "--n_hidden_layers": 4, "--out": "checkpoints/sweep/w16_d4.pt", "--log": "logs/sweep/w16_d4.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []},
+    {"id": "sweep-w16-d5", "name": "w16×d5", "args": {"--ablation": "full", "--hidden": 16, "--n_hidden_layers": 5, "--out": "checkpoints/sweep/w16_d5.pt", "--log": "logs/sweep/w16_d5.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []},
+
+    {"id": "sweep-w32-d1", "name": "w32×d1", "args": {"--ablation": "full", "--hidden": 32, "--n_hidden_layers": 1, "--out": "checkpoints/sweep/w32_d1.pt", "--log": "logs/sweep/w32_d1.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []},
+    {"id": "sweep-w32-d2", "name": "w32×d2", "args": {"--ablation": "full", "--hidden": 32, "--n_hidden_layers": 2, "--out": "checkpoints/sweep/w32_d2.pt", "--log": "logs/sweep/w32_d2.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []},
+    {"id": "sweep-w32-d3", "name": "w32×d3", "args": {"--ablation": "full", "--hidden": 32, "--n_hidden_layers": 3, "--out": "checkpoints/sweep/w32_d3.pt", "--log": "logs/sweep/w32_d3.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []},
+    {"id": "sweep-w32-d4", "name": "w32×d4", "args": {"--ablation": "full", "--hidden": 32, "--n_hidden_layers": 4, "--out": "checkpoints/sweep/w32_d4.pt", "--log": "logs/sweep/w32_d4.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []},
+    {"id": "sweep-w32-d5", "name": "w32×d5", "args": {"--ablation": "full", "--hidden": 32, "--n_hidden_layers": 5, "--out": "checkpoints/sweep/w32_d5.pt", "--log": "logs/sweep/w32_d5.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []},
+
+    {"id": "sweep-w64-d1", "name": "w64×d1", "args": {"--ablation": "full", "--hidden": 64, "--n_hidden_layers": 1, "--out": "checkpoints/sweep/w64_d1.pt", "--log": "logs/sweep/w64_d1.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []},
+    {"id": "sweep-w64-d2", "name": "w64×d2", "args": {"--ablation": "full", "--hidden": 64, "--n_hidden_layers": 2, "--out": "checkpoints/sweep/w64_d2.pt", "--log": "logs/sweep/w64_d2.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []},
+    {"id": "sweep-w64-d3", "name": "w64×d3", "args": {"--ablation": "full", "--hidden": 64, "--n_hidden_layers": 3, "--out": "checkpoints/sweep/w64_d3.pt", "--log": "logs/sweep/w64_d3.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []},
+    {"id": "sweep-w64-d4", "name": "w64×d4", "args": {"--ablation": "full", "--hidden": 64, "--n_hidden_layers": 4, "--out": "checkpoints/sweep/w64_d4.pt", "--log": "logs/sweep/w64_d4.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "论文选定架构", "depends_on": []},
+    {"id": "sweep-w64-d5", "name": "w64×d5", "args": {"--ablation": "full", "--hidden": 64, "--n_hidden_layers": 5, "--out": "checkpoints/sweep/w64_d5.pt", "--log": "logs/sweep/w64_d5.csv", "--epochs": 1000, "--scheduler": "loss_prop"}, "description": "", "depends_on": []}
+  ]
+}

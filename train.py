@@ -70,6 +70,9 @@ def parse_args() -> argparse.Namespace:
         default="full",
         help="消融模式：full=4区域(J-PINN), two=2区域, single=1区域",
     )
+    # P6 架构 sweep
+    p.add_argument("--hidden", type=int, default=64, help="每子网隐藏层宽度（P6 sweep）")
+    p.add_argument("--n_hidden_layers", type=int, default=4, help="每子网隐藏层数（P6 sweep）")
     p.add_argument("--out", type=str, default="checkpoints/jpinn.pt", help="checkpoint 保存路径")
     p.add_argument("--log", type=str, default="logs/train_history.csv", help="训练历史 CSV")
     p.add_argument("--seed", type=int, default=42)
@@ -162,11 +165,15 @@ def main() -> None:
     print_info(f"  裂纹段: x ∈ [{ds.spec.crack_x_min}, {ds.spec.crack_x_max}]")
 
     # 模型
-    model = build_model(ablation=args.ablation, dtype=dtype).to(device)
+    model = build_model(
+        ablation=args.ablation, dtype=dtype,
+        hidden=args.hidden, n_hidden_layers=args.n_hidden_layers,
+    ).to(device)
     n_params = model.count_parameters()
     print_info(f"模型参数量: {n_params}")
-    if args.ablation == "full":
+    if args.ablation == "full" and args.hidden == 64 and args.n_hidden_layers == 4:
         # 论文 §2.3 报告 71,712；本实现因 LayerNorm 略有差异，宽松判定
+        # 仅默认架构时断言（P6 sweep 会传不同 hidden/depth，跳过）
         assert 60_000 < n_params < 100_000, f"4 区域 JPINN 应约 7-9 万参数，实际 {n_params}"
 
     # 优化器与调度器（沿用 v4:1494-1500；论文原选 Adam 而非 AdamW）
