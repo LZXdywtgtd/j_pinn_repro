@@ -34,11 +34,16 @@ def read_final_best_loss(csv_path: Path) -> dict:
 
 
 def collect_pareto(sweep_dir: str, out_csv: str, n_params_map: dict | None = None) -> None:
-    """遍历 sweep_dir 下所有 CSV，输出 Pareto 表格"""
+    """遍历 sweep_dir 下所有 CSV，输出 Pareto 表格。
+
+    参数量优先从 n_params_map（外部传入）取；否则尝试读同目录 checkpoint 的 n_params。
+    """
     sweep_path = Path(sweep_dir)
     if not sweep_path.is_dir():
         print(f"[ERROR] sweep 目录不存在: {sweep_dir}")
         return
+
+    import torch
 
     rows_out = []
     for csv_file in sorted(sweep_path.glob("*.csv")):
@@ -50,7 +55,18 @@ def collect_pareto(sweep_dir: str, out_csv: str, n_params_map: dict | None = Non
         parts = arch.split("_")
         hidden = int(parts[0].lstrip("w")) if parts[0].startswith("w") else 0
         depth = int(parts[1].lstrip("d")) if len(parts) > 1 else 0
-        params = n_params_map.get(arch, 0) if n_params_map else 0
+        # 参数量：优先外部 map，否则读 checkpoint
+        params = 0
+        if n_params_map and arch in n_params_map:
+            params = n_params_map[arch]
+        else:
+            ckpt = Path("checkpoints") / "sweep" / f"{arch}.pt"
+            if ckpt.exists():
+                try:
+                    st = torch.load(str(ckpt), map_location="cpu", weights_only=False)
+                    params = int(st.get("n_params", 0))
+                except Exception:
+                    params = 0
         rows_out.append({
             "arch": arch, "hidden": hidden, "n_hidden_layers": depth,
             "params": params, "best_loss": info["best_loss"],

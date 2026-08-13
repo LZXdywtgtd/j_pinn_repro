@@ -337,6 +337,43 @@ def T_exact_torch(x, y, include_crack=True, eps=1e-4,
 
 ---
 
+## 4.5 调度器 (`schedulers`)（v0.6 P17 新增）
+
+```python
+class LossProportionalLR(torch.optim.lr_scheduler._LRScheduler):
+    """lr = base_lr * clip(loss / loss_ref, lr_min/base_lr, 1.0)"""
+    def __init__(self, optimizer, loss_ref=None, lr_min=1e-6, last_epoch=-1): ...
+    def step(self, loss=None, epoch=None):
+        """loss 必传；loss=None 时 no-op（基类 _initial_step 调用）"""
+    def state_dict(self) -> dict: ...       # 含 loss_ref/lr_min/base_lrs
+    def load_state_dict(self, state) -> None: ...
+```
+
+## 4.6 日志 writer (`logging_utils`)（v0.6 D3 新增）
+
+```python
+def make_writer(logger_type: str, log_dir: str):
+    """none → None；tensorboard → SummaryWriter；wandb → wandb.run"""
+def log_metrics(writer, epoch: int, comps: dict) -> None:
+    """发射 loss 各分量（tensorboard 用 add_scalars；wandb 用 log）"""
+```
+
+## 4.7 集成工具（v0.6 P9 新增）
+
+```python
+# run_ensemble.py
+def run_restarts(n_seeds, base_args, cwd, seed_base=0) -> list[Path]:
+    """循环 seeds 跑 train.py 子进程，返回 checkpoint 路径"""
+def average_models(ckpt_paths, out_path) -> dict:
+    """torch.stack 参数平均（保持 float64 dtype）"""
+
+# collect_pareto.py
+def collect_pareto(sweep_dir, out_csv, n_params_map=None) -> None:
+    """读 sweep CSV 输出 best_loss 表格 + Top5"""
+```
+
+---
+
 ## 5. 训练入口 (`train`)
 
 ### 5.1 命令行参数
@@ -351,6 +388,8 @@ def T_exact_torch(x, y, include_crack=True, eps=1e-4,
 --N_iface         int   50        # 每条缝合边配点数
 --N_crack         int   50        # 裂纹段每侧配点数
 --ablation        str   full      # full/two/single
+--hidden          int   64        # 每子网隐藏层宽度（P6 sweep）
+--n_hidden_layers int   4         # 每子网隐藏层数（P6 sweep）
 --out             str   checkpoints/jpinn.pt
 --log             str   logs/train_history.csv
 --seed            int   42
@@ -369,6 +408,11 @@ def T_exact_torch(x, y, include_crack=True, eps=1e-4,
 --lambda_bc              float 1.0
 --lambda_neumann_crack   float 0.05
 --lambda_smooth          float 0.0
+# v0.6 新增
+--bc_loss_type    str   huber    # 外边界损失：mse（论文 Eq.18）/ huber（Eq.19）
+--scheduler       str   cosine   # LR 调度器：cosine / loss_prop（论文 §3.4）
+--lr_min          float 1e-6     # LR 下限（loss_prop 用）
+--logger          str   none     # 训练日志：none / tensorboard / wandb
 ```
 
 **续训行为**（v0.4 P4-core + v0.5 调整）：

@@ -58,18 +58,20 @@ def log_metrics(writer, epoch: int, comps: dict) -> None:
     if writer is None:
         return
     metrics = {
-        "loss/total": comps.get("total", 0.0),
-        "loss/pde": comps.get("pde", 0.0),
-        "loss/iface": comps.get("iface", 0.0),
-        "loss/bc": comps.get("bc", 0.0),
-        "loss/neumann": comps.get("neumann", 0.0),
-        "loss/smooth": comps.get("smooth", 0.0),
+        "total": comps.get("total", 0.0),
+        "pde": comps.get("pde", 0.0),
+        "iface": comps.get("iface", 0.0),
+        "bc": comps.get("bc", 0.0),
+        "neumann": comps.get("neumann", 0.0),
+        "smooth": comps.get("smooth", 0.0),
     }
     if "bc_active_frac" in comps:
-        metrics["loss/bc_active_frac"] = comps["bc_active_frac"]
+        metrics["bc_active_frac"] = comps["bc_active_frac"]
     if hasattr(writer, "add_scalars"):
-        # tensorboard SummaryWriter
+        # tensorboard SummaryWriter：main_tag="loss" + 各子 tag
         writer.add_scalars("loss", metrics, epoch)
     elif hasattr(writer, "log"):
-        # wandb
-        writer.log(metrics, step=epoch)
+        # wandb：直接用 "loss/total" 等带前缀 key
+        wandb_metrics = {f"loss/{k}": v for k, v in metrics.items()}
+        wandb_metrics["step"] = epoch
+        writer.log(wandb_metrics)

@@ -6,6 +6,30 @@
 
 ---
 
+## [v0.6] - 2026-08-14
+
+### Added
+- **D1-fix 干跑状态回滚**：`train.py` 干跑无条件回滚 model/optimizer/scheduler（清 CODE_BUGS N-5）
+- **P7 时间估算 + ETA 修复**：`estimate_training_time`（仿 v4:954-1063）+ 修复 ETA 死代码
+- **P17 损失比例 LR**：`schedulers.LossProportionalLR`（论文 §3.4）+ `--scheduler/--lr_min`
+- **P12 BC loss 切换**：`bc_loss_dirichlet(loss_type)` + `--bc_loss_type {mse,huber}`
+- **P6 架构 sweep**：`build_model(hidden, n_hidden_layers)` + 20 架构配方 + `collect_pareto.py`
+- **P9 多 restart 集成**：`run_ensemble.py`（多 seed + 参数平均）
+- **D3 TB/W&B**：`logging_utils.make_writer/log_metrics` + `--logger`
+
+### Fixed
+- ETA 死代码（ETAEstimator 从未 update）
+- `logging_utils` tensorboard 双前缀（`loss/loss/total`）
+- `schedulers` 违反 `_LRScheduler` 基类契约
+- `run_ensemble.average_models` float64 精度损失（`.float()` 降 float32）
+- `collect_pareto` params 恒为 0（未读 checkpoint n_params）
+
+### Changed
+- `train.py` 新增 9 个 CLI flag
+- `docs/dev_reference/api.md`：CLI 表 + 4.5/4.6/4.7 新模块 API
+
+---
+
 ## [v0.5] - 2026-08-13
 
 ### Added

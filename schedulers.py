@@ -46,13 +46,26 @@ class LossProportionalLR(_LRScheduler):
     ) -> None:
         self.loss_ref = loss_ref
         self.lr_min = lr_min
+        self._current_loss: float | None = None
         # base_lr 来自 optimizer 初始 param_groups
         self.base_lrs = [group["lr"] for group in optimizer.param_groups]
         super().__init__(optimizer, last_epoch)
 
     def get_lr(self):
-        """由 step() 设置 lr 后此方法不再被调用；保留兼容返回当前 lr"""
-        return [group["lr"] for group in self.optimizer.param_groups]
+        """按当前 loss_ref / last_epoch 计算各 param_group 的 lr。
+
+        遵循 _LRScheduler 契约：step() 会先更新内部状态再调用本方法，
+        返回的 list 会写入每个 param_group["lr"]。
+        """
+        if self.loss_ref is None:
+            # 尚未有 loss_ref（未 step(loss)）→ 保持 base_lr
+            return self.base_lrs
+        # 比例，clamp 到 [lr_min/base_lr, 1.0]
+        ratio = max(
+            self.lr_min / max(self.base_lrs[0], 1e-12),
+            min(self._current_loss / max(self.loss_ref, 1e-12), 1.0),
+        )
+        return [base_lr * ratio for base_lr in self.base_lrs]
 
     def step(self, loss=None, epoch=None):
         """loss 必传（比例 LR 需要）；epoch 可选（兼容 _LRScheduler 签名）。
@@ -62,31 +75,28 @@ class LossProportionalLR(_LRScheduler):
         """
         if loss is None:
             # 基类 _initial_step() 调用：no-op（仅推进 last_epoch）
+            self._current_loss = None
             if epoch is None:
                 self.last_epoch += 1
             else:
                 self.last_epoch = epoch
-            self._last_lr = [group["lr"] for group in self.optimizer.param_groups]
+            self._last_lr = self.get_lr()
             return
         loss_val = float(loss) if isinstance(loss, torch.Tensor) else float(loss)
+        self._current_loss = loss_val
         # 首次 step：设定 loss_ref
         if self.loss_ref is None:
             self.loss_ref = max(loss_val, 1e-12)
-        # 比例，clamp 到 [lr_min/base_lr, 1.0]
-        ratio = max(
-            self.lr_min / max(self.base_lrs[0], 1e-12),
-            min(loss_val / max(self.loss_ref, 1e-12), 1.0),
-        )
-        for i, group in enumerate(self.optimizer.param_groups):
-            base_lr = self.base_lrs[i] if i < len(self.base_lrs) else self.base_lrs[0]
-            group["lr"] = base_lr * ratio
-
-        self._last_lr = [group["lr"] for group in self.optimizer.param_groups]
         # 更新 last_epoch（用显式 epoch 或自增）
         if epoch is None:
             self.last_epoch += 1
         else:
             self.last_epoch = epoch
+        # 用 get_lr() 计算并写入（遵循基类契约）
+        lrs = self.get_lr()
+        for group, lr in zip(self.optimizer.param_groups, lrs):
+            group["lr"] = lr
+        self._last_lr = lrs
 
     def state_dict(self):
         """扩展 state_dict 保存 loss_ref / lr_min（续训用）"""

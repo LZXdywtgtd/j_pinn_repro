@@ -60,10 +60,10 @@ def average_models(ckpt_paths: list[Path], out_path: str) -> dict:
         state = torch.load(p, map_location="cpu", weights_only=False)
         states.append(state["model_state_dict"])
 
-    # 平均
+    # 平均（保持原 dtype，float64 精度不损失）
     avg_state = {}
     for key in states[0].keys():
-        tensors = torch.stack([s[key].float() for s in states])
+        tensors = torch.stack([s[key] for s in states])
         avg_state[key] = tensors.mean(dim=0)
 
     # 保存 merged（保留第一个 checkpoint 的元数据）
