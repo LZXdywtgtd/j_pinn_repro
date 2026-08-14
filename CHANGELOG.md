@@ -19,6 +19,10 @@
 ### Changed
 - ADR-0001 补全§9 当时背景 + §10 局限性 + §11 冲突检测与重新决策机制（用户提醒）
 
+### Changed（Stage 2 - B14）
+- `losses.py:244-289` LossWeights docstring 扩展：论文 Table 2 vs 本项目映射（含 λ_pde=1e-6 vs 100.0 量级偏差 + 反转条件）
+- `docs/experiment_reports/调参与算法工程指导文档.md` 新增 §8「论文 Table 2 权重映射」5 小节（论文值/本项目值/量级偏差原因/调参区间/反转条件）
+
 ---
 
 ## [v0.6] - 2026-08-14

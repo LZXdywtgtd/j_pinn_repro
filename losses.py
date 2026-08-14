@@ -243,18 +243,44 @@ def smoothness_loss(
 # ============================================================
 @dataclass
 class LossWeights:
-    """权重（论文热力场降维版）
+    """损失权重配置（论文 Table 2 vs 本项目映射）。
 
-    调参依据（5000 epoch 实测）：
-    - lambda_pde 主导残差收敛；paper 用 1e-6 是因 Navier-Cauchy 含二阶混合导数量级大
-    - 我们是 Laplace 方程（∂² + ∂²），pde_loss 量级 1.0+，所以 λ_pde=100 让它主导
-    - lambda_interface 缝合太弱会跨区域漂移；强到 50 反而抑制 PDE 学习（实测）
+    ┌──────────────────────────────────────────────────────────────────┐
+    │ 论文 Table 2（MPa 物理单位 + Navier-Cauchy PDE）：                 │
+    │   λ_pde = 1e-6   λ_disp = 1e-7   λ_0 = 60   λ_smooth = 0.01    │
+    │   论文 PDE 含混合二阶导 ∂²/∂x∂y 量级 ~10000；λ_pde=1e-6 让其     │
+    │   主导但 loss 数值小。                                            │
+    ├──────────────────────────────────────────────────────────────────┤
+    │ 本项目（Laplace ∇²T=0 + 归一化域 [-1,1]²）：                      │
+    │   λ_pde = 100       主导 PDE 收敛（无量纲残差量级 1.0+）          │
+    │   λ_interface = 10  缝合连续（量级 0.01）                         │
+    │   λ_bc = 1.0        外边界（量级 0.1）                            │
+    │   λ_neumann_crack=0.05  Neumann 跳跃值大（量级 50）调小避免主导   │
+    │   λ_smooth = 0.0    默认关闭（Hessian 计算开销大且不稳）          │
+    ├──────────────────────────────────────────────────────────────────┤
+    │ 量级偏差原因：                                                     │
+    │   论文 PDE 量级 ~1e4（弹性力学二阶导）；本项目 PDE 量级 ~1        │
+    │   论文域 [0,40]mm；本项目 [-1,1]² 归一化（无量纲）                │
+    │   论文位移 u ~1e-3 m；本项目温度 T ~1（归一化后）                 │
+    │   论文 λ 配比体现"残差数值大 → 权重小"；本项目反之                │
+    ├──────────────────────────────────────────────────────────────────┤
+    │ ⚠️ 反转条件（ADR-0001）：                                         │
+    │   获得论文原版 DIC + 切换 Navier-Cauchy 时，必须重做权重          │
+    │   量级校准（建议按"λ ~ 1/残差量级"原则）。                        │
+    │   详见 docs/DECISIONS/0001-laplace-substitute.md §10.1.4           │
+    └──────────────────────────────────────────────────────────────────┘
+
+    调参经验（5000 epoch 实测）：
+    - λ_pde < 50 → PDE 残差不收敛（实测 5000 epoch 停 1.7e-3）
+    - λ_pde > 200 → 主导训练但压制其他损失
+    - λ_interface > 30 → 抑制 PDE 学习
+    - λ_neumann_crack > 0.1 → Neumann 项量级 25 主导总 loss
     """
     lambda_pde: float = 100.0
     lambda_interface: float = 10.0
-    lambda_interface_normal: float = 1.0  # L_traction 降维（论文 0.8e-6；Laplace 量级 1.0+）
+    lambda_interface_normal: float = 1.0
     lambda_bc: float = 1.0
-    lambda_neumann_crack: float = 0.05  # Neumann 量级 ~50，调小避免主导
+    lambda_neumann_crack: float = 0.05
     lambda_smooth: float = 0.0  # 默认关闭（Hessian 计算开销大且不稳）
 
 
