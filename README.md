@@ -35,22 +35,48 @@ python tests/smoke_test.py
 ```
 应打印 `✓ ALL SMOKE TESTS PASSED`。
 
-### 2. 生成合成数据 + 训练 + 可视化
+### 2. 统一 CLI 入口（v0.8 推荐）
+
+```bash
+# 查看所有子命令
+python jpinn.py --help
+
+# 训练
+python jpinn.py train --epochs 5000
+
+# 可视化
+python jpinn.py visualize --checkpoint checkpoints/jpinn.pt
+
+# J-integral 后处理
+python jpinn.py j_integral --checkpoint checkpoints/jpinn.pt
+
+# 生成合成数据
+python jpinn.py generate_data
+
+# 消融 / 集成 / Pareto（编排）
+python jpinn.py ablations --dry-run
+python jpinn.py ensemble --n_restarts 3
+python jpinn.py pareto --sweep_dir logs/sweep
+```
+
+**兼容**：旧 CLI 入口仍可独立运行（`python train.py` / `python visualize.py` / `python -m postprocess.run_j_integral` 等）。
+
+### 3. 完整 pipeline（生成 → 训练 → 可视化）
 ```bash
 # 1) 生成合成数据（200x200 网格，保存为 data/synthetic_thermal.npz）
-python data/generate_synthetic_thermal_data.py
+python jpinn.py generate_data
 
 # 2) 训练（5000 epoch，CPU，约 8 分钟）
-python train.py --epochs 5000
+python jpinn.py train --epochs 5000
 
 # 3) 可视化（生成 logs/figures/ 三张图）
-python visualize.py --checkpoint checkpoints/jpinn.pt
+python jpinn.py visualize --checkpoint checkpoints/jpinn.pt
 
 # 4) 消融：单区域 vs 双区域 vs 全 4 区域
-python train.py --ablation single --epochs 5000 --out checkpoints/single.pt
-python train.py --ablation two    --epochs 5000 --out checkpoints/two.pt
-python visualize.py --compare checkpoints/single.pt checkpoints/two.pt checkpoints/jpinn.pt \
-                     --compare_labels Single Two FourRegions
+python jpinn.py train --ablation single --epochs 5000 --out checkpoints/single.pt
+python jpinn.py train --ablation two    --epochs 5000 --out checkpoints/two.pt
+python jpinn.py visualize --compare checkpoints/single.pt checkpoints/two.pt checkpoints/jpinn.pt \
+                         --compare_labels Single Two FourRegions
 ```
 
 ## 文件结构
@@ -60,23 +86,50 @@ j_pinn_repro/
 ├── README.md
 ├── requirements.txt
 ├── CHANGELOG.md
-├── train.py                    # 训练入口
-├── losses.py                   # PDE/Interface/BC/Neumann/Smoothness 5 类损失
-├── utils.py                    # 区域掩码 + 拉丁超立方采样 + 归一化
-├── visualize.py                # 加载 checkpoint 出图
+├── jpinn.py                     # 统一 CLI 入口（v0.8；7 子命令：train/visualize/j_integral/...）
+├── train.py                     # 训练入口（仍兼容）
+├── visualize.py                 # 可视化入口（仍兼容）
+├── jpinn_core/                  # 内部核心包（v0.8 收纳）
+│   ├── losses.py                # PDE/Interface/BC/Neumann/Smoothness 5 类损失
+│   ├── outlier.py               # P2 Z-score 边界去噪
+│   ├── schedulers.py            # P17 LossProportionalLR
+│   ├── logging_utils.py         # D3 TB/W&B writer
+│   ├── utils.py                 # 区域掩码 + 拉丁超立方采样 + 归一化
+│   ├── utils_console.py         # 彩色控制台
+│   └── utils_tee_eta.py         # Tee + ETAEstimator
 ├── data/
 │   ├── generate_synthetic_thermal_data.py
-│   ├── comsol_png_loader.py    # 预留接口（STUB）
-│   ├── synthetic_thermal.npz   # 生成产物（被 .gitignore）
-│   └── dataset.py              # ThermalDataset 统一入口
+│   ├── comsol_png_loader.py
+│   ├── synthetic_thermal.npz    # 生成产物（被 .gitignore）
+│   └── dataset.py               # ThermalDataset 统一入口
 ├── models/
-│   └── pinn_core.py            # MLPBlock + JPINN（核心架构）
+│   └── pinn_core.py             # MLPBlock + JPINN（核心架构）
+├── postprocess/                 # J-integral 后处理（已用包级相对导入）
+│   ├── __init__.py
+│   ├── analytic_J.py
+│   ├── contour_sampling.py
+│   ├── stress_from_T.py
+│   ├── far_field_anchoring.py
+│   ├── j_integral.py
+│   └── run_j_integral.py
 ├── tests/
-│   └── smoke_test.py           # 端到端冒烟测试（8 步）
-├── checkpoints/                # 训练产物（被 .gitignore）
-├── logs/                       # 训练历史 + 图像（被 .gitignore）
+│   └── smoke_test.py            # 端到端冒烟测试（11 步）
+├── tasks/                       # 配方 JSON（用户可编辑）
+│   ├── ablation_recipes.json
+│   └── architecture_sweep_recipes.json
+├── checkpoints/                 # 训练产物（被 .gitignore）
+├── logs/                        # 训练历史 + 图像（被 .gitignore）
+├── docs/                        # 文档（8 个子目录）
+│   ├── audit/                   # 审计报告 + CODE_BUGS.md
+│   ├── architecture/            # 架构设计文档
+│   ├── DECISIONS/               # ADR 决策日志
+│   ├── dev_reference/           # API + 开发人员 + 流程文档
+│   ├── collaboration/           # 消融实验指南
+│   ├── experiment_reports/      # 调参 + 实验设计
+│   ├── postprocess/             # J_integral 设计
+│   └── user_guides/             # 快速配置指南
 └── .github/workflows/
-    └── feishu-notify.yml       # 推送通知（沿用 v4）
+    └── feishu-notify.yml        # 推送通知（沿用 v4）
 ```
 
 ## 复现 v4 风格

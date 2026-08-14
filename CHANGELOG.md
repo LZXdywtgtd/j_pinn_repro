@@ -6,6 +6,42 @@
 
 ---
 
+## [v0.8] - 2026-08-14
+
+> **v0.8 主题**：根目录整理 + 统一 CLI 入口
+> 6 个 stage 渐进式重构，保留旧 CLI 入口兼容
+
+### Added
+- `jpinn.py` —— 统一 CLI 入口（7 个子命令: train / visualize / j_integral / generate_data / ablations / ensemble / pareto）
+  - 参数透传：`sys.argv[1]` 是子命令名，`sys.argv[2:]` 透传给原 CLI
+  - sys.path 自动注入 `jpinn_core/ data/ models/ postprocess/`
+- `jpinn_core/` 包（收纳 7 个内部核心模块）
+  - losses / outlier / schedulers / logging_utils / utils / utils_console / utils_tee_eta
+
+### Changed
+- CLI 入口 import 路径：`from losses` → `from jpinn_core.losses`
+- 架构文档 / J_integral 设计文档 / v0.6 审计报告：路径引用同步 jpinn_core
+- `docs/全流程.md` → `docs/dev_reference/全流程.md`
+- `docs/文档审查指南.md` → `docs/dev_reference/文档审查指南.md`
+- `docs/CODE_BUGS.md` → `docs/audit/CODE_BUGS.md`
+- `data/dataset.py:77` 修正 bare 命名空间污染：`from comsol_png_loader` → `from .comsol_png_loader`
+- `postprocess/j_integral.py` 移除 try/except 双路径，简化导入
+
+### Removed
+- 根目录 7 个 .py 内部核心模块（移入 `jpinn_core/`）
+
+### Preserved（兼容）
+- 旧 CLI 入口（train.py / visualize.py / run_ablations.py / run_ensemble.py / collect_pareto.py）仍可独立运行
+- 历史审计报告（v0.6 / v0.7 paper 对照 / 决策日志）保留原路径引用（历史真实性）
+
+### Commit 关联
+- `5e6407e` Stage 1: 收纳 7 个核心模块到 jpinn_core/
+- `7ec08e6` Stage 2: 3 个 dev-internal 文档归位
+- `3b5a1b2` Stage 3: jpinn.py 多子命令入口
+- `f680c04` Stage 4: 路径引用同步
+
+---
+
 ## [v0.7] - 2026-08-14
 
 > **v0.7 主题**：论文 vs 实现 完整对照核验（28 项发现 → 7 个阶段修复）
