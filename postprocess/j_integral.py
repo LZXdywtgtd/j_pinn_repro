@@ -45,9 +45,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from analytic_J import analytic_grad_T_phys, j_integral_exact
-from contour_sampling import RectContour, contour_to_tensor
-from stress_from_T import grad_T_physical, strain_energy_W, stress_analog
+from .analytic_J import analytic_grad_T_phys, j_integral_exact
+from .contour_sampling import RectContour, contour_to_tensor
+from .stress_from_T import grad_T_physical, strain_energy_W, stress_analog
 
 
 @torch.no_grad()

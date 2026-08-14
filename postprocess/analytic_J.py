@@ -30,7 +30,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from contour_sampling import RectContour, contour_to_tensor
+from .contour_sampling import RectContour, contour_to_tensor
 
 
 @torch.no_grad()

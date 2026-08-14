@@ -45,6 +45,23 @@
   - §8.3 CLI 入口示例
 - `postprocess/j_integral.py` 文件顶部 docstring 加 ⚠️⚠️⚠️ 物理意义限制段
 
+### Fixed（Stage 5 - B2 + B7 + B8）
+- `losses.py:402-409` B2：移除 `L_b = L_b_raw * (n_total / n_active)` 冗余
+  - 旧逻辑：mask 后 re-evaluate 再放大 → 等价于未 mask 的 L_b_raw，违反论文 Eq.19 `1/|A| Σ`
+  - 新逻辑：mask 后直接用 `L_b_raw`（|A| 已隐式归一化）
+  - 影响：L_bc 数值约减小 N_total/N_active 倍（≈ 1.2x）；与论文 Eq.19 公式对齐
+- `postprocess/far_field_anchoring.py` B7：新增 `select_far_field_anchor(x_lig, x_wake, J, mode)`
+  - `mode="extremes"`（默认）：`min(x_lig) + max(x_wake)`（原行为）
+  - `mode="residual_min"`：拟合线性平面 → 取 `|J_raw - J_fit|` 最小 contour（论文 §4.4 「误差最小处」）
+- `postprocess/run_j_integral.py` 接入 B7 + 新增 `--anchor_mode {extremes, residual_min}` CLI flag
+- `losses.py:365-369` B8：边界 region_id 改用 `utils.region_id` 统一（替代 Python 短路布尔加法）
+  - 旧逻辑：4 个互斥 `(x<0)&(y>=0)` 短路 + long 加法（角点 (0,0) 路由到 1，与内部配点不一致）
+  - 新逻辑：复用 `utils.region_id`（与 `sample_interior` / `sample_interface` / `sample_crack` 一致）
+  - 行为差异：内部配点采样 + 边界点现在都用同一 routing 函数，避免未来 corner 处理不一致
+
+### Changed（Stage 5）
+- `docs/dev_reference/api.md` 同步：§3.3 LossAggregator 注释 B2/B8 + §8.1 select_far_field_anchor + §8.3 --anchor_mode CLI 表
+
 ---
 
 ## [v0.6] - 2026-08-14

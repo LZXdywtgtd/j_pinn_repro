@@ -13,6 +13,10 @@ PINN 不完美收敛会留下残留体力 `f_res = (∂σ_xx/∂x + ∂σ_xy/∂
 3. 线性 detrend + 锚定到远场
    J_corrected(x, y) = J_raw(x, y) - b_lig·(x - x_lig_far) - b_wake·(y - x_wake_far)
                       + J_far
+
+B7 (v0.7 阶段 5)：新增 --anchor_mode {extremes, residual_min}
+- extremes（默认，原行为）：取 min(x_lig) + max(x_wake) contour 作为远场锚
+- residual_min：取 |J_raw - J_fit| 最小的 contour（论文 §4.4「误差最小处」更严谨）
 """
 from __future__ import annotations
 
@@ -36,6 +40,37 @@ def fit_linear_drift(
     coeffs, _, _, _ = np.linalg.lstsq(A, J, rcond=None)
     a, b_lig, b_wake = coeffs
     return float(a), float(b_lig), float(b_wake)
+
+
+def select_far_field_anchor(
+    x_lig: np.ndarray,
+    x_wake: np.ndarray,
+    J: np.ndarray,
+    mode: str = "extremes",
+) -> Tuple[float, float]:
+    """B7: 选择远场锚定 contour 参数
+
+    Args:
+        x_lig, x_wake: contour 参数数组（1D）
+        J: J 积分值数组（与 x_lig 同长）
+        mode:
+          - "extremes"（默认）：取 min(x_lig) + max(x_wake)（原行为）
+          - "residual_min"：取 |J_raw - J_fit| 最小 contour（论文 §4.4 「误差最小处」）
+
+    Returns:
+        (x_lig_far, x_wake_far)
+    """
+    if mode == "extremes":
+        return float(np.min(x_lig)), float(np.max(x_wake))
+    elif mode == "residual_min":
+        # 拟合平面 → 残差 → 取最小残差绝对值 contour
+        a, b_lig, b_wake = fit_linear_drift(x_lig, x_wake, J)
+        J_fit = a + b_lig * x_lig + b_wake * x_wake
+        residual = np.abs(J - J_fit)
+        idx = int(np.argmin(residual))
+        return float(x_lig[idx]), float(x_wake[idx])
+    else:
+        raise ValueError(f"anchor_mode must be 'extremes' or 'residual_min', got {mode!r}")
 
 
 def compensate_j_surface(

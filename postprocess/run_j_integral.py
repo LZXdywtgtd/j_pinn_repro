@@ -34,13 +34,14 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from data.dataset import ThermalDataset
-from postprocess.analytic_J import j_integral_exact_for_surface
+from postprocess.analytic_J import j_integral_exact_surface
 from postprocess.contour_sampling import sweep_contours
 from postprocess.far_field_anchoring import (
     compensate_j_surface,
     fit_linear_drift,
     path_independence_metric,
     relative_error,
+    select_far_field_anchor,
 )
 from postprocess.j_integral import j_integral_surface
 
@@ -70,8 +71,14 @@ def compute_and_save(
     x_lig_values: tuple[float, ...] = (-0.9, -0.7, -0.5, -0.3, -0.1),
     x_wake_values: tuple[float, ...] = (0.1, 0.3, 0.5, 0.7, 0.9),
     y_range: tuple[float, float] = (-1.0, 1.0),
+    anchor_mode: str = "extremes",
 ) -> dict:
     """主入口：从 checkpoint 计算 J 曲面 → 补偿 → 画图 + 写指标
+
+    Args:
+        anchor_mode: B7 (v0.7 阶段 5) 远场锚定选择
+            - "extremes"（默认）：min(x_lig) + max(x_wake)
+            - "residual_min"：|J_raw - J_fit| 最小 contour（论文 §4.4）
 
     Returns: dict with all metrics
     """
@@ -114,12 +121,15 @@ def compute_and_save(
 
     # 计算解析 J 曲面（参考）
     print("计算解析 J 曲面（参考）...")
-    J_exact_flat = j_integral_exact_for_surface(contours, include_crack=False)
+    J_exact_flat = j_integral_exact_surface(contours, include_crack=False)
 
     # 远场锚定
-    # 选最远的 contour 作为参考（论文做法）
-    x_lig_far = min(x_lig_values)
-    x_wake_far = max(x_wake_values)
+    # B7 (v0.7 阶段 5): anchor_mode
+    #   - extremes（默认）：min(x_lig) + max(x_wake)（原行为）
+    #   - residual_min：|J_raw - J_fit| 最小 contour（论文 §4.4 更严谨）
+    x_lig_far, x_wake_far = select_far_field_anchor(
+        x_lig_arr, x_wake_arr, J_pinn_flat, mode=anchor_mode,
+    )
     J_pinn_corrected = compensate_j_surface(
         x_lig_arr, x_wake_arr, J_pinn_flat,
         x_lig_far=x_lig_far, x_wake_far=x_wake_far,
@@ -186,7 +196,7 @@ def plot_3d_surface(Z: np.ndarray, x_lig: list, x_wake: list, title: str, save_p
     X, Y = np.meshgrid(x_lig, x_wake, indexing="ij")
     fig = plt.figure(figsize=(8, 6))
     ax = fig.add_subplot(111, projection="3d")
-    surf = ax.plot_surface(X, Y, Z, cmap="viridis", edgecolor="="none", alpha=0.9)
+    surf = ax.plot_surface(X, Y, Z, cmap="viridis", edgecolor="none", alpha=0.9)
     ax.set_xlabel("x_lig (韧带侧)")
     ax.set_ylabel("x_wake (尾迹侧)")
     ax.set_zlabel("J")
@@ -209,6 +219,10 @@ def main():
                    default=[0.1, 0.3, 0.5, 0.7, 0.9])
     p.add_argument("--y_min", type=float, default=-1.0)
     p.add_argument("--y_max", type=float, default=1.0)
+    # B7 (v0.7 阶段 5): 远场锚定模式
+    p.add_argument("--anchor_mode", choices=["extremes", "residual_min"],
+                   default="extremes",
+                   help="远场锚定选择：extremes=min(x_lig)+max(x_wake)；residual_min=|J_raw-J_fit|最小")
     args = p.parse_args()
 
     metrics = compute_and_save(
@@ -219,6 +233,7 @@ def main():
         x_lig_values=tuple(args.x_lig_values),
         x_wake_values=tuple(args.x_wake_values),
         y_range=(args.y_min, args.y_max),
+        anchor_mode=args.anchor_mode,
     )
 
     # 质量门控

@@ -336,7 +336,7 @@ class LossAggregator:
         weights: LossWeights | None = None,
         outlier_cfg: Optional[OutlierConfig] = None,
         device: torch.device | str = "cpu",
-        bc_loss_type: str = "huber",
+        bc_loss_type: str = "mse",
     ) -> None:
         self.w = weights or LossWeights()
         self.bc_loss_type = bc_loss_type  # P12：mse / huber
@@ -362,13 +362,11 @@ class LossAggregator:
 
         # 3. Dirichlet BC（外边界）
         bd = batch["boundary"]
-        # 给外边界构造 region_id（边界点可能跨区域，按 (x,y) 推断）
-        rid_b = (
-            ((bd["x"] < 0) & (bd["y"] >= 0)).long() * 0
-            + ((bd["x"] >= 0) & (bd["y"] >= 0)).long() * 1
-            + ((bd["x"] < 0) & (bd["y"] < 0)).long() * 2
-            + ((bd["x"] >= 0) & (bd["y"] < 0)).long() * 3
-        )
+        # B8 (v0.7 阶段 5): 用 utils.region_id 统一路由（替代 Python 短路）
+        # 旧逻辑：4 个互斥布尔条件手写 + long 加法（易错：角点 (0,0) 路由到 1）
+        # 新逻辑：复用 utils.region_id（与内部配点 / 缝合 / 裂纹一致）
+        from utils import region_id as _region_id
+        rid_b = _region_id(bd["x"], bd["y"]).to(bd["x"].device)
         L_b = bc_loss_dirichlet(
             model, bd["x"], bd["y"], rid_b.to(bd["x"].device), bd["T_target"],
             loss_type=self.bc_loss_type,
@@ -399,8 +397,11 @@ class LossAggregator:
                     bd["T_target"][active_mask],
                     loss_type=self.bc_loss_type,
                 )
-                # 论文 Table 5：|A| 归一化（N_total / N_active）
-                L_b = L_b_raw * (n_total / n_active)
+                # B2 (v0.7 阶段 5): 论文 Eq.19 仅 |A| 归一化（移除 n_total/n_active 冗余）
+                # 原因：F.mse_loss / smooth_l1_loss 输入已 mask 过，|A|=n_active
+                # 旧逻辑 L_b * (n_total/n_active) 等价于恢复未 mask 的 L_b_raw，
+                # 与论文 Eq.19 L_bc = (1/|A|) Σ_{i∈A} (T_pred - T_target)² 不符
+                L_b = L_b_raw
 
         # 4. Neumann 裂纹
         ck = batch["crack"]

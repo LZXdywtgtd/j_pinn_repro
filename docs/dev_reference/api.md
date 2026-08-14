@@ -251,6 +251,7 @@ class LossAggregator:
         weights: LossWeights | None = None,
         outlier_cfg: OutlierConfig | None = None,  # v0.5 P2
         device: torch.device | str = "cpu",
+        bc_loss_type: str = "mse",     # v0.7 阶段 1：默认 mse（论文 Eq.18）
     ) -> None: ...
     def __call__(
         self, model, batch: dict, current_epoch: int = 0
@@ -258,7 +259,11 @@ class LossAggregator:
         """返回 (total, components_dict)；components_dict 字段:
         'pde'/'iface'/'tnormal'/'bc'/'neumann'/'smooth'
         + 'bc_active_frac'/'bc_n_outliers' (P2 启用时)
-        + 'total' (均为 float)"""
+        + 'total' (均为 float)
+
+        v0.7 阶段 5 (B2)：L_bc 不再乘 n_total/n_active；mask 后直接 re-evaluate
+        v0.7 阶段 5 (B8)：边界 region_id 用 utils.region_id 统一（替代 Python 短路）
+        """
 ```
 
 ### 3.4 `outlier`（P2，v0.5 新增）
@@ -286,7 +291,7 @@ class BoundaryOutlierTracker:
 - 每点维护残差平方 `(T_pred - T_target)²` 的 EMA（α 平滑）
 - burn-in（Γ=100）后，每 edge 内用中位数 + MAD（median absolute deviation）估算 μ/σ
 - `Z_i = |EMA_i - μ_edge| / (σ_edge + ε)`，`Z_i > δ=3.0` 标记 outlier
-- L_bc 除以 `N_total / N_active` 归一化（论文 Table 5：88% 损失下降）
+- v0.7 阶段 5 (B2)：L_bc 不再乘 n_total/n_active；mask 后直接重算（论文 Eq.19 `1/|A| Σ`）
 
 ---
 
@@ -419,6 +424,8 @@ def collect_pareto(sweep_dir, out_csv, n_params_map=None) -> None:
 --scheduler       str   loss_prop # LR 调度器：loss_prop（论文 §3.4 损失比例默认）/ cosine
 --lr_min          float 1e-6     # LR 下限（loss_prop 用）
 --logger          str   none     # 训练日志：none / tensorboard / wandb
+# v0.7 阶段 5（B7）远场锚定（postprocess CLI，非 train.py）
+# --anchor_mode extremes | residual_min  # 详见 postprocess/run_j_integral.py
 ```
 
 **续训行为**（v0.4 P4-core + v0.5 调整）：
@@ -496,6 +503,24 @@ from postprocess.j_integral import (
     j_integral_mode_decomposed,     # ⚠️ v0.7 Mode I/II 分解（论文 §2.2 Eq.9-10）
 )
 
+from postprocess.far_field_anchoring import (
+    fit_linear_drift,               # 最小二乘拟合 J = a + b_lig·x_lig + b_wake·x_wake
+    select_far_field_anchor,         # v0.7 阶段 5 (B7)：选择远场锚点 contour
+    compensate_j_surface,           # 远场锚定补偿（论文 §4.4 公式）
+    path_independence_metric,       # 路径无关度 = std/mean
+    relative_error,                 # 相对误差 = |J_pred - J_exact| / max(|J_exact|)
+)
+
+def select_far_field_anchor(
+    x_lig: np.ndarray, x_wake: np.ndarray, J: np.ndarray,
+    mode: str = "extremes",         # "extremes" | "residual_min"
+) -> Tuple[float, float]:
+    """B7: 选远场锚定 contour 参数
+    - extremes (默认): min(x_lig) + max(x_wake)
+    - residual_min: |J_raw - J_fit| 最小 contour（论文 §4.4）
+    """
+```
+
 def j_integral_one_contour(
     model, contour: RectContour, T_min: float, T_max: float, spec=None,
 ) -> float:
@@ -564,5 +589,10 @@ python -m postprocess.run_j_integral \
     --checkpoint checkpoints/jpinn.pt \
     --data data/synthetic_thermal.npz \
     --out_dir logs/j_integral \
-    --n_per_side 200
+    --n_per_side 200 \
+    --anchor_mode extremes         # v0.7 阶段 5 (B7)；residual_min 可选
 ```
+
+**远场锚定模式**（B7）：
+- `extremes`（默认）：取 `min(x_lig)` + `max(x_wake)` contour（原行为）
+- `residual_min`：取 `|J_raw - J_fit|` 最小 contour（论文 §4.4「误差最小处」）
