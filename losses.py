@@ -191,10 +191,37 @@ def neumann_crack_loss(
     eps: float = 1e-3,
     huber_beta: float = 0.05,
 ) -> torch.Tensor:
-    """
-    裂纹段上/下两侧法向导数跳跃。
-    解析场 dT/dy 跳跃值 ≈ 100（因为 tanh(50y) 在 y=±eps 处导数跳变）。
-    数值近似：(T_top - T_bot) / (2*eps) ≈ dT_jump_value
+    """裂纹段上/下两侧 ∂T/∂y 连续性约束（论文 Eq.17 traction continuity）。
+
+    ┌──────────────────────────────────────────────────────────────────┐
+    │ 论文 Eq.17（弹性力学版）：裂纹面 traction 连续                       │
+    │   σ_ij · n_j |top = σ_ij · n_j |bot    （法向应力连续）              │
+    │                                                                  │
+    │ 本项目（Laplace 降维版）：裂纹面 ∂T/∂y 连续                          │
+    │   ∂T/∂y |top ≈ ∂T/∂y |bot            （法向温度梯度连续）            │
+    │                                                                  │
+    │ ⚠️ 语义变化（v0.7 阶段 3）：                                        │
+    │   旧版：用有限差分估计 (T_top - T_bot)/(2*eps) ≈ dT_jump_value      │
+    │        （强制模型匹配 tanh(50y) 跳跃 = 数学替代）                     │
+    │   新版：用 autograd 求 ∂T/∂y_top 与 ∂T/∂y_bot，约束其差接近 0      │
+    │        （强制 ∂T/∂y 跨裂纹连续 = 物理约束）                          │
+    │                                                                  │
+    │ 为何这样改：                                                       │
+    │   - 旧版强迫模型学 tanh 跳跃（与解析场一致，但与真裂纹场不符）       │
+    │   - 新版强制"裂纹面对称梯度连续"——这是热传导下的物理约束            │
+    │   - 与论文 Eq.17 traction continuity 形式等价                       │
+    │                                                                  │
+    │ ⚠️ dT_jump_value 参数已废弃（保留仅兼容 CLI 签名）                   │
+    │   建议下游传 0.0；旧值 50.0 仍兼容但不再使用                         │
+    └──────────────────────────────────────────────────────────────────┘
+
+    Args:
+        dT_jump_value: 已废弃（保留兼容；新逻辑不依赖此值）
+        eps: 未使用（保留兼容）
+        huber_beta: Huber 平滑参数（控制小残差 L2、大残差 L1）
+
+    Returns:
+        loss: scalar tensor, mean(Huber(|∂T/∂y_top - ∂T/∂y_bot|, 0))
     """
     x_top_g = x_top.detach().requires_grad_(True)
     y_top_g = y_top.detach().requires_grad_(True)
@@ -204,9 +231,11 @@ def neumann_crack_loss(
     T_top = model(x_top_g, y_top_g, rid_top)
     T_bot = model(x_bot_g, y_bot_g, rid_bot)
 
-    dT_dy_estimate = (T_top - T_bot) / (2.0 * eps)
-    target = torch.full_like(dT_dy_estimate, dT_jump_value)
-    return F.smooth_l1_loss(dT_dy_estimate, target, beta=huber_beta)
+    dT_dy_top = torch.autograd.grad(T_top.sum(), y_top_g, create_graph=True)[0]
+    dT_dy_bot = torch.autograd.grad(T_bot.sum(), y_bot_g, create_graph=True)[0]
+
+    grad_jump = dT_dy_top - dT_dy_bot
+    return F.smooth_l1_loss(grad_jump, torch.zeros_like(grad_jump), beta=huber_beta)
 
 
 # ============================================================

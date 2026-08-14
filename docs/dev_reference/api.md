@@ -218,7 +218,13 @@ def neumann_crack_loss(
     model, x_top, y_top, rid_top, x_bot, y_bot, rid_bot,
     dT_jump_value: float, eps: float = 1e-3, huber_beta: float = 0.05,
 ) -> torch.Tensor:
-    """裂纹段法向跳跃 Huber"""
+    """裂纹段 ∂T/∂y 连续性约束（论文 Eq.17 traction continuity）
+
+    v0.7 语义变化（B9）：
+    - 旧版：有限差分 (T_top - T_bot)/(2*eps) ≈ dT_jump_value（强制 tanh 跳跃）
+    - 新版：autograd 求 ∂T/∂y_top 与 ∂T/∂y_bot，约束其差接近 0
+    - dT_jump_value / eps 参数保留仅兼容 CLI 签名（不再使用）
+    """
 
 def smoothness_loss(model, x, y, region_id) -> torch.Tensor:
     """Sobolev Hessian Frobenius 范数"""

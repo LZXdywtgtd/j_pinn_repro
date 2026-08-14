@@ -23,6 +23,14 @@
 - `losses.py:244-289` LossWeights docstring 扩展：论文 Table 2 vs 本项目映射（含 λ_pde=1e-6 vs 100.0 量级偏差 + 反转条件）
 - `docs/experiment_reports/调参与算法工程指导文档.md` 新增 §8「论文 Table 2 权重映射」5 小节（论文值/本项目值/量级偏差原因/调参区间/反转条件）
 
+### Changed（Stage 3 - B9 + C3）
+- `losses.py:186-249` `neumann_crack_loss` 重写（对齐论文 Eq.17 traction continuity）
+  - **旧逻辑**：有限差分 (T_top - T_bot)/(2*eps) ≈ dT_jump_value（强制 tanh 跳跃 = 数学替代）
+  - **新逻辑**：autograd 求 ∂T/∂y_top 与 ∂T/∂y_bot，约束差接近 0（∂T/∂y 跨裂纹连续 = 物理约束）
+  - **签名兼容**：`dT_jump_value` / `eps` 参数保留但不再使用（下游 CLI 兼容）
+  - **测试**：常数场 → loss ≈ 0；线性场（slope=3）两侧 → loss ≈ 0
+  - **影响**：训练行为改变——之前学 tanh 跳跃，现在学梯度连续；旧 checkpoint 续训不受影响（loss function 替换独立）
+
 ---
 
 ## [v0.6] - 2026-08-14
