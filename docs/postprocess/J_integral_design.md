@@ -84,8 +84,8 @@ j_pinn_repro/
 
 | 复用项 | 来源 |
 |---|---|
-| autograd 模式（detach + requires_grad + grad）| [losses.py:47-69](../losses.py) |
-| region_id 推断 | [utils.py:region_id](../utils.py) |
+| autograd 模式（detach + requires_grad + grad）| [jpinn_core/losses.py:47-69](../../jpinn_core/losses.py) |
+| region_id 推断 | [jpinn_core/utils.py:region_id](../../jpinn_core/utils.py) |
 | 模型加载 + checkpoint 解析 | [visualize.py:load_model](../visualize.py) |
 | ThermalDataset（T_min/T_max/spec）| [data/dataset.py:ThermalDataset](../data/dataset.py) |
 | 4 区域 JPINN（4 子网络 + 路由）| [models/pinn_core.py:JPINN](../models/pinn_core.py) |
