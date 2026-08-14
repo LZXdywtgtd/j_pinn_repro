@@ -15,7 +15,7 @@
 ## 关键决策
 
 - **架构**：4 个独立 MLP，每个 4 隐藏层 × 64 神经元 + SiLU；总参数量 ≈ 71,712（与论文 §4.2 一致）
-- **优化器**：Adam + CosineAnnealingLR（沿用 v4 `run_train.py:1494-1500` 写法）
+- **优化器**：Adam + LossProportionalLR（v0.7 B11 改默认；论文 §3.4 损失比例；可通过 `--scheduler cosine` 切回）
 - **精度**：float64（论文注：float32 在裂纹尖端损失精度）
 - **设备**：CPU 默认（论文明确 CPU ~10× faster than GPU for ~72K 参数规模）
 - **数据**：合成 2D 热力场（log 调和函数 + tanh 裂纹间断）；COMSOL PNG 加载器留 stub

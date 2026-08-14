@@ -8,16 +8,20 @@
 
 ## [v0.7] - 2026-08-14
 
+> **v0.7 主题**：论文 vs 实现 完整对照核验（28 项发现 → 7 个阶段修复）
+> 详见 [`docs/audit/2026-08-14-paper-对照核验报告.md`](docs/audit/2026-08-14-paper-对照核验报告.md)
+
+### Added（Stage 0 - 决策日志）
+- `docs/DECISIONS/0001-laplace-substitute.md`（ADR-0001）— 维度简化决策完整溯源
+  - 用户原话（jsonl:3）+ AI thinking + 决策时点 + 会话 ID + commit hash
+  - A1-A4 文档化段（表 + 因果链 + 反转条件）
+  - 备选方案 + 否决理由
+- ADR 模板（§12）— 后续决策按此规范记录
+- ADR-0001 补全 §9 当时背景 + §10 局限性 + §11 冲突检测与重新决策机制（用户提醒）
+
 ### Changed
 - `--bc_loss_type` 默认 `huber` → `mse`（B1：贴合论文 Eq.18 合成场景）
 - `--scheduler` 默认 `cosine` → `loss_prop`（B11：贴合论文 §3.4 损失比例）
-
-### Added
-- `docs/DECISIONS/0001-laplace-substitute.md`（ADR-0001）— 维度简化决策完整溯源
-- ADR 模板（§12）— 后续决策按此规范记录
-
-### Changed
-- ADR-0001 补全§9 当时背景 + §10 局限性 + §11 冲突检测与重新决策机制（用户提醒）
 
 ### Changed（Stage 2 - B14）
 - `losses.py:244-289` LossWeights docstring 扩展：论文 Table 2 vs 本项目映射（含 λ_pde=1e-6 vs 100.0 量级偏差 + 反转条件）
@@ -61,6 +65,24 @@
 
 ### Changed（Stage 5）
 - `docs/dev_reference/api.md` 同步：§3.3 LossAggregator 注释 B2/B8 + §8.1 select_far_field_anchor + §8.3 --anchor_mode CLI 表
+
+### Changed（Stage 6 - 收尾）
+- `README.md:18` 优化器描述同步：`CosineAnnealingLR` → `LossProportionalLR`（v0.7 B11 改默认；注明 `--scheduler cosine` 切换）
+
+### Added（Stage 6 - 审计）
+- `docs/audit/2026-08-14-paper-对照核验报告.md` — v0.7 28 项发现完整审计
+  - 7 项 FIXED（B1/B2/B5/B7/B8/B9/B11）
+  - 11 项 DOCUMENTED（A1-A4/B3/B4/B6/B10/B12/B13/B14）
+  - 3 项 VERIFIED（A5/A6/A7）
+  - 3 项 MERGED（C1→B11/C2→B5/C3→B9）
+  - 4 项不做 / 部分实现（C4-C7）
+  - ADR-0001 反转条件 + 残留风险清单 + 7 stage commit 关联表
+
+### Summary
+- **v0.7 总修改**：7 个 commit + 13 个文件 + 6 步完整工作流（修复 → 自审计 → 写文档 → 再审计 → 测试 → commit）
+- **流程合规**：每个 Stage 完整执行 6 步；smoke_test 11/11 PASSED
+- **ADR-0001**：完整记录维度简化决策 + 反转条件（拿到 DIC 后需重做）
+- **下一阶段**：v0.8 预留（DIC 数据对接 / 反转 ADR-0001 / C4-C7 完整化）
 
 ---
 
