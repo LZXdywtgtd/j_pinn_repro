@@ -32,16 +32,16 @@ if CURRENT_DIR not in sys.path:
     sys.path.insert(0, CURRENT_DIR)
 
 from data.dataset import ThermalDataset
-from losses import LossAggregator, LossWeights
+from jpinn_core.losses import LossAggregator, LossWeights
 from models.pinn_core import build_model
-from outlier import OutlierConfig
-from utils_console import (
+from jpinn_core.outlier import OutlierConfig
+from jpinn_core.utils_console import (
     print_info, print_warning, print_error, print_success,
     print_title, print_result, print_header,
 )
-from utils_tee_eta import Tee, ETAEstimator, estimate_training_time
-from schedulers import LossProportionalLR
-from logging_utils import make_writer, log_metrics
+from jpinn_core.utils_tee_eta import Tee, ETAEstimator, estimate_training_time
+from jpinn_core.schedulers import LossProportionalLR
+from jpinn_core.logging_utils import make_writer, log_metrics
 
 
 def datetime_now() -> str:

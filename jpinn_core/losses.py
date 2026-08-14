@@ -25,7 +25,7 @@ import torch.nn.functional as F
 
 # P2 Z-score 边界去噪（v0.5）
 try:
-    from outlier import BoundaryOutlierTracker, OutlierConfig, bc_residuals
+    from jpinn_core.outlier import BoundaryOutlierTracker, OutlierConfig, bc_residuals
 except ImportError:  # 兼容非模块上下文
     BoundaryOutlierTracker = None
     OutlierConfig = None
@@ -365,7 +365,7 @@ class LossAggregator:
         # B8 (v0.7 阶段 5): 用 utils.region_id 统一路由（替代 Python 短路）
         # 旧逻辑：4 个互斥布尔条件手写 + long 加法（易错：角点 (0,0) 路由到 1）
         # 新逻辑：复用 utils.region_id（与内部配点 / 缝合 / 裂纹一致）
-        from utils import region_id as _region_id
+        from jpinn_core.utils import region_id as _region_id
         rid_b = _region_id(bd["x"], bd["y"]).to(bd["x"].device)
         L_b = bc_loss_dirichlet(
             model, bd["x"], bd["y"], rid_b.to(bd["x"].device), bd["T_target"],

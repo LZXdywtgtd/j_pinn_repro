@@ -35,7 +35,7 @@ def main() -> int:
     import torch
     from data.generate_synthetic_thermal_data import main as gen_data
     from data.dataset import ThermalDataset
-    from losses import LossAggregator, LossWeights
+    from jpinn_core.losses import LossAggregator, LossWeights
     from models.pinn_core import build_model
 
     torch.set_default_dtype(torch.float64)
@@ -233,8 +233,8 @@ def main() -> int:
 
     # Step 11: P2 Z-score 边界去噪（端到端，burnin=0 快速验证）
     step("11) P2 Z-score 边界去噪（端到端）")
-    from outlier import OutlierConfig
-    from losses import LossAggregator as LA2
+    from jpinn_core.outlier import OutlierConfig
+    from jpinn_core.losses import LossAggregator as LA2
     outlier_cfg = OutlierConfig(
         enabled=True, burnin_epochs=0, delta=3.0, ema_alpha=0.3,
         min_active_per_edge=2,

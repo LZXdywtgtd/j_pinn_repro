@@ -27,7 +27,7 @@ if CURRENT_DIR not in sys.path:
 
 from data.dataset import ThermalDataset
 from models.pinn_core import build_model
-from utils import (
+from jpinn_core.utils import (
     DEFAULT_DOMAIN,
     T_exact_torch,
     denormalize_from_unit,

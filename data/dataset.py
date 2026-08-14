@@ -35,7 +35,7 @@ from typing import Optional
 import numpy as np
 import torch
 
-from utils import (
+from jpinn_core.utils import (
     DomainSpec,
     DEFAULT_DOMAIN,
     T_exact_torch,
@@ -74,7 +74,7 @@ class ThermalDataset:
             raise ValueError(f"Unknown source: {self.source}")
 
     def _load_comsol_png(self) -> None:
-        from comsol_png_loader import load_comsol_scan_dir  # 局部导入避免循环
+        from .comsol_png_loader import load_comsol_scan_dir  # 局部导入避免循环
         if not self.comsol_dir:
             raise ValueError(
                 "source='comsol_png' 时必须传 comsol_dir"

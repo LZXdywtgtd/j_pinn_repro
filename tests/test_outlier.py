@@ -19,7 +19,7 @@ CURRENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = CURRENT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from outlier import BoundaryOutlierTracker, OutlierConfig
+from jpinn_core.outlier import BoundaryOutlierTracker, OutlierConfig
 
 
 def _make_tracker(burnin: int = 100, delta: float = 3.0, alpha: float = 0.5,

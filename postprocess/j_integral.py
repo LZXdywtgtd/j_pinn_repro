@@ -69,7 +69,7 @@ def _j_integral_pinn_one(
     5. σ_ij = 梯度积，W = ½|∇T|²
     6. 4 段分别梯形积分 J = ∮ (W·n - σ·∇T) ds
     """
-    from utils import region_id  # 延迟导入避免循环
+    from jpinn_core.utils import region_id  # 延迟导入避免循环
 
     x_norm, y_norm, n_x, n_y = contour_to_tensor(contour)
     # region_id 需要 requires_grad=False
@@ -208,12 +208,8 @@ def j_integral_mode_decomposed(
     Returns:
         (J_I, J_II): Mode I / Mode II J-integral 分量
     """
-    # 延迟导入 region_id；既兼容包级调用（from postprocess.j_integral）也兼容
-    # 旧的 sys.path 注入式调用（v0.3 历史遗留导入路径）
-    try:
-        from utils import region_id  # 旧路径
-    except ImportError:
-        from ..utils import region_id  # 包级相对路径
+    # 延迟导入 region_id（v0.8 阶段 1 统一为 jpinn_core）
+    from jpinn_core.utils import region_id
 
     if spec is None:
         x_min, x_max = contour.x_lig, contour.x_wake

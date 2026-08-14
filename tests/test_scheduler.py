@@ -18,7 +18,7 @@ CURRENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = CURRENT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from schedulers import LossProportionalLR
+from jpinn_core.schedulers import LossProportionalLR
 
 
 def _make_sched(lr: float = 1e-3, lr_min: float = 1e-6):
