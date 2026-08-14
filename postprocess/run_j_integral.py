@@ -110,14 +110,17 @@ def compute_and_save(
     x_lig_arr, x_wake_arr, J_pinn_grid = j_integral_surface(
         model, contours, ds.T_min, ds.T_max, ds.spec,
     )
-    # J_pinnular flatten（与 contours 索引对齐）
-    J_pinn_flat = np.zeros(len(contours), dtype=np.float64)
-    for i, (xi, xj) in enumerate(zip(x_lig_arr, x_wake_arr)):
-        # 找对应 contour
-        for j, c in enumerate(contours):
-            if c.x_lig == xi and c.x_wake == xj:
-                J_pinn_flat[j] = J_pinn_grid[i] if J_pinn_grid.ndim == 1 else J_pinn_grid.flat[i]
-                break
+    # v0.8 修复：扁平化 J_pinn_grid；不论 J_pinn_grid 是 1D 还是 2D 都正确对应 25 个 contour
+    # 旧版嵌套循环 (i, j) 索引错位会传 list 给 np.linalg.lstsq 导致 "Incompatible dimensions"
+    J_pinn_flat = np.asarray(J_pinn_grid).ravel()
+    # 同样把 x_lig_arr / x_wake_arr 扩展到 25 长度，与 J_pinn_flat 索引对齐
+    # 旧版只取 unique 长度（5）但 J 是 (5,5) → 维度不匹配
+    if J_pinn_grid.ndim == 2:
+        x_lig_flat = np.tile(x_lig_arr, len(x_wake_arr))      # (5,5) 行优先 → (25,)
+        x_wake_flat = np.repeat(x_wake_arr, len(x_lig_arr))    # (5,5) 列重复 → (25,)
+    else:
+        x_lig_flat = x_lig_arr
+        x_wake_flat = x_wake_arr
 
     # 计算解析 J 曲面（参考）
     print("计算解析 J 曲面（参考）...")
@@ -128,16 +131,16 @@ def compute_and_save(
     #   - extremes（默认）：min(x_lig) + max(x_wake)（原行为）
     #   - residual_min：|J_raw - J_fit| 最小 contour（论文 §4.4 更严谨）
     x_lig_far, x_wake_far = select_far_field_anchor(
-        x_lig_arr, x_wake_arr, J_pinn_flat, mode=anchor_mode,
+        x_lig_flat, x_wake_flat, J_pinn_flat, mode=anchor_mode,
     )
     J_pinn_corrected = compensate_j_surface(
-        x_lig_arr, x_wake_arr, J_pinn_flat,
+        x_lig_flat, x_wake_flat, J_pinn_flat,
         x_lig_far=x_lig_far, x_wake_far=x_wake_far,
     )
 
     # 解析 J 也补偿（用同样的锚定点，便于比较）
     J_exact_corrected = compensate_j_surface(
-        x_lig_arr, x_wake_arr, J_exact_flat,
+        x_lig_flat, x_wake_flat, J_exact_flat,
         x_lig_far=x_lig_far, x_wake_far=x_wake_far,
     )
 

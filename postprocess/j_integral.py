@@ -50,7 +50,8 @@ from .contour_sampling import RectContour, contour_to_tensor
 from .stress_from_T import grad_T_physical, strain_energy_W, stress_analog
 
 
-@torch.no_grad()
+# v0.8 修复：移除 @torch.no_grad() —— 与 grad_T 的 requires_grad 互斥
+# 原意是减少内存/加速，但后处理需要 autograd 求 ∂T/∂x 来计算应力/J 积分
 def _j_integral_pinn_one(
     model: nn.Module,
     contour: RectContour,

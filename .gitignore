@@ -31,6 +31,9 @@ logs/*.txt
 logs/figures/*
 !logs/figures/.gitkeep
 !logs/.gitkeep
+# J 积分后处理产物（v0.8 阶段 7）
+logs/j_integral/*
+!logs/j_integral/.gitkeep
 
 # === 文档/论文（避免仓库臃肿 + 学术版权） ===
 # 参考论文 PDF 通常体积大且存在版权问题，不入库；本地阅读即可
@@ -40,6 +43,8 @@ docs/**/*.pdf
 docs/*.txt
 docs/**/*.txt
 !docs/.gitkeep
+# 论文中文译本（用户明确：纯本地使用，不 commit/push）
+docs/论文中文译本/
 
 # === Python 缓存（递归匹配所有子目录） ===
 __pycache__/

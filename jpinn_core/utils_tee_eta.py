@@ -151,8 +151,12 @@ class ETAEstimator:
 def estimate_training_time(
     model, ds, agg, optimizer, device, args, scheduler=None,
     n_warmup_epochs: int = 2,
+    # v0.8 修复：原 batch 规模太小（128+16+8+8 ≈ 256 点）→ 估出的单 epoch 时间
+    #   比实际（2500+100+50+50 ≈ 10000 点）快 6-19 倍，最终预估偏差巨大。
+    #   改为用真实 batch 规模跑干跑（仅 2 个 epoch，总耗时仍 < 1 秒）。
     overhead_factor: float = 1.2,
     early_stop_factor: float = 0.85,
+    use_real_batch: bool = True,  # v0.8 新增：默认 True；False 保留旧行为
 ) -> tuple:
     """
     跑 n_warmup_epochs 个小 batch epoch 估算单 epoch 耗时与总训练时长。
@@ -180,13 +184,24 @@ def estimate_training_time(
         times = []
         for _ in range(n_warmup_epochs):
             t0 = _time.time()
-            batch = ds.get_collocation_batch(
-                n_int_per_region=128,
-                n_bc_per_edge=16,
-                n_iface_per_seam=8,
-                n_crack_per_side=8,
-                seed=args.seed,
-            )
+            if use_real_batch:
+                # v0.8：复用正式训练的 batch 规模（与 args.N_int 等保持一致）
+                batch = ds.get_collocation_batch(
+                    n_int_per_region=args.N_int,
+                    n_bc_per_edge=args.N_bc,
+                    n_iface_per_seam=args.N_iface,
+                    n_crack_per_side=args.N_crack,
+                    seed=args.seed,
+                )
+            else:
+                # 旧行为（保留以备调试）：缩小 batch
+                batch = ds.get_collocation_batch(
+                    n_int_per_region=128,
+                    n_bc_per_edge=16,
+                    n_iface_per_seam=8,
+                    n_crack_per_side=8,
+                    seed=args.seed,
+                )
             optimizer.zero_grad()
             total, _ = agg(model, batch, current_epoch=0)
             total.backward()

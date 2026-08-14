@@ -17,15 +17,19 @@ def grad_T(
     y: torch.Tensor,
     region_id: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """∂T/∂x, ∂T/∂y via autograd（在归一化空间）"""
+    """∂T/∂x, ∂T/∂y via autograd（在归一化空间）
+
+    v0.8 修复：autograd.grad 默认 backward 后释放中间梯度，第二次调用报错
+    "Trying to backward through the graph a second time"。需要 retain_graph=True。
+    """
     x = x.detach().requires_grad_(True)
     y = y.detach().requires_grad_(True)
     T = model(x, y, region_id)
     dT_dx = torch.autograd.grad(
-        T.sum(), x, create_graph=False, retain_graph=False, allow_unused=False
+        T.sum(), x, create_graph=False, retain_graph=True, allow_unused=False
     )[0]
     dT_dy = torch.autograd.grad(
-        T.sum(), y, create_graph=False, retain_graph=False, allow_unused=False
+        T.sum(), y, create_graph=False, retain_graph=True, allow_unused=False
     )[0]
     return dT_dx, dT_dy
 

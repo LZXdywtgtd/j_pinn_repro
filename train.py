@@ -17,6 +17,7 @@ J-PINN 特有：
 from __future__ import annotations
 
 import argparse
+import atexit
 import copy
 import csv
 import os
@@ -298,7 +299,8 @@ def main() -> None:
     start = time.time()
     best_loss = float("inf")
     best_state: Optional[dict] = None
-    eta = ETAEstimator(total=args.epochs, alpha=0.3)
+    # v0.8 修复：alpha 0.3 → 0.5（更快响应真实单 epoch 时间变化）
+    eta = ETAEstimator(total=args.epochs, alpha=0.5)
 
     # 续训：恢复 model / optimizer / scheduler / RNG state / 起点
     start_epoch = 1

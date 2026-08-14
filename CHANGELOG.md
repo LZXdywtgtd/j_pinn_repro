@@ -44,6 +44,22 @@
   - `test_load_comsol_png_comsol_style`：端到端读出的 T 范围不再常数
 - `docs/dev_reference/api.md §1.3` 同步检测算法描述 + 真实数据实测记录
 
+### Fixed（v0.8 阶段 7：4 个 CLI 路径 bug + ETA 估算）
+- `train.py:20` 加 `import atexit`（直接跑 `python train.py` 报 `NameError: atexit`；smoke_test 用 subprocess 掩盖了该路径）
+- `postprocess/stress_from_T.py` `grad_T` 两次 `autograd.grad` 加 `retain_graph=True`（旧版第二次 backward 报 "Trying to backward through the graph a second time"）
+- `postprocess/j_integral.py` `_j_integral_pinn_one` 移除 `@torch.no_grad()` 装饰器——与 `grad_T` 的 `requires_grad_(True)` 互斥，导致 `RuntimeError: element 0 does not require grad`
+- `postprocess/run_j_integral.py` `J_pinn_grid` 扁平化 + `x_lig_flat`/`x_wake_flat` 用 tile/repeat 扩展到与 J 等长（旧版 unique 5 个与 (5,5) 网格不匹配 → `LinAlgError: Incompatible dimensions`）
+- `jpinn_core/utils_tee_eta.py` 干跑默认 `use_real_batch=True` 用真实配点规模（旧版缩小 batch 128/16/8/8 导致 ETA 预估偏差 9.3×；修复后 1.2×）
+
+### Added（v0.8 阶段 8：端到端 CLI 回归测试 + 审计流程强化）
+- `tests/test_run_j_integral_cli.py` 6 个 subprocess 端到端测试（`--help` / 最小 contour / 小 n_per_side / extremes / residual_min / 默认 n_per_side）
+  - 判定标准：stderr 含 `Traceback` 即 FAIL（区分 Python 崩溃 exit=1 与质量门控 return 1，旧版 `returncode in (0,1,2)` 无法抓崩溃）
+  - 回滚验证：bug 状态 5/6 正确 FAIL，修复状态 6/6 PASSED
+- `docs/RUN.md`：强化审计 5 条铁律 + 三 shell 命令清单 + 文档→源码逐项映射表 + 未覆盖路径标注
+
+### Changed
+- `docs/dev_reference/api.md` §4.7 同步 `estimate_training_time(use_real_batch=True)` 新签名；§8.2 同步 `grad_T` retain_graph 修复与后处理链路说明
+
 ### Preserved（兼容）
 - 旧 CLI 入口（train.py / visualize.py / run_ablations.py / run_ensemble.py / collect_pareto.py）仍可独立运行
 - 历史审计报告（v0.6 / v0.7 paper 对照 / 决策日志）保留原路径引用（历史真实性）

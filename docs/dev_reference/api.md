@@ -381,7 +381,7 @@ def log_metrics(writer, epoch: int, comps: dict) -> None:
     """发射 loss 各分量（tensorboard 用 add_scalars；wandb 用 log）"""
 ```
 
-## 4.7 集成工具（v0.6 P9 新增）
+## 4.7 集成工具（v0.6 P9 新增，v0.8 阶段 7 更新）
 
 ```python
 # run_ensemble.py
@@ -393,6 +393,18 @@ def average_models(ckpt_paths, out_path) -> dict:
 # collect_pareto.py
 def collect_pareto(sweep_dir, out_csv, n_params_map=None) -> None:
     """读 sweep CSV 输出 best_loss 表格 + Top5"""
+
+# jpinn_core/utils_tee_eta.py（v0.8 阶段 7 更新）
+def estimate_training_time(model, ds, agg, optimizer, device, args,
+                           scheduler=None, n_warmup_epochs=2,
+                           overhead_factor=1.2, early_stop_factor=0.85,
+                           use_real_batch=True) -> tuple:
+    """干跑估算单 epoch 耗时与总训练时长
+    v0.8 阶段 7：新增 use_real_batch（默认 True）
+      - True：用 args.N_int/N_bc/N_iface/N_crack 真实配点规模（旧版缩小 batch
+        导致预估偏差 9.3×；修复后 1.2×）
+      - False：旧行为（128/16/8/8 缩小 batch，保留兼容调试）
+    """
 ```
 
 ---
@@ -577,12 +589,20 @@ def j_integral_mode_decomposed(
     """
 ```
 
-### 8.2 应力类比（v0.7 B6 文档化）
+### 8.2 应力类比（v0.7 B6 文档化，v0.8 阶段 7 更新）
 
 ```python
 from postprocess.stress_from_T import (
     grad_T, grad_T_physical, stress_analog, strain_energy_W,
 )
+
+def grad_T(model, x, y, region_id) -> tuple:
+    """∂T/∂x, ∂T/∂y via autograd（在归一化空间）
+
+    v0.8 阶段 7 修复：autograd.grad 加 retain_graph=True
+    （旧版 False 会在第二次 backward 时报 "Trying to backward through
+    the graph a second time"，因第一次 ∂T/∂x 已释放中间梯度）
+    """
 
 def stress_analog(dT_dx, dT_dy) -> tuple[σ_xx, σ_yy, σ_xy]:
     """σ_ij = ∇T·∇T^T（论文弹性 σ_ij = λ tr(ε) δ_ij + 2μ ε_ij 的降维类比）
@@ -593,6 +613,14 @@ def stress_analog(dT_dx, dT_dy) -> tuple[σ_xx, σ_yy, σ_xy]:
        - 需反转 ADR-0001 切换 Navier-Cauchy 才能恢复物理应力
     """
 ```
+
+**v0.8 阶段 7 后处理链路修复**（`postprocess/j_integral.py`）：
+- `_j_integral_pinn_one` 移除 `@torch.no_grad()` 装饰器——它与 `grad_T` 的
+  `requires_grad_(True)` 互斥，导致 `RuntimeError: element 0 of tensors does not
+  require grad`（装饰器在 grad 前包裹整段，让 autograd 图无法建立）
+- `run_j_integral.py` 中 `J_pinn_grid` 扁平化 + `x_lig_flat`/`x_wake_flat`
+  用 `np.tile`/`np.repeat` 扩展到与 J 等长——旧版 unique 值（5 个）与
+  `J_pinn_grid (5,5)` 不匹配导致 `LinAlgError: Incompatible dimensions`
 
 ### 8.3 CLI 入口
 
