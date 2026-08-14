@@ -41,13 +41,17 @@ python tests/smoke_test.py
 # 查看所有子命令
 python jpinn.py --help
 
-# 训练
+# 训练（v0.9：不带 --out 自动归档到 outputs/full/<task_id>/）
 python jpinn.py train --epochs 5000
 
-# 可视化
+# 可视化（v0.9：不带 --checkpoint 自动解析 outputs/latest.json）
+python jpinn.py visualize
+# 显式路径仍兼容：
 python jpinn.py visualize --checkpoint checkpoints/jpinn.pt
 
-# J-integral 后处理
+# J-integral 后处理（同 visualize：不带 --checkpoint 自动解析 outputs/latest.json）
+python jpinn.py j_integral
+# 显式路径仍兼容：
 python jpinn.py j_integral --checkpoint checkpoints/jpinn.pt
 
 # 生成合成数据
@@ -66,13 +70,15 @@ python jpinn.py pareto --sweep_dir logs/sweep
 # 1) 生成合成数据（200x200 网格，保存为 data/synthetic_thermal.npz）
 python jpinn.py generate_data
 
-# 2) 训练（5000 epoch，CPU，约 8 分钟）
+# 2) 训练（5000 epoch，CPU，约 8 分钟；v0.9 自动归档到 outputs/full/<task_id>/）
 python jpinn.py train --epochs 5000
 
-# 3) 可视化（生成 logs/figures/ 三张图）
-python jpinn.py visualize --checkpoint checkpoints/jpinn.pt
+# 3) 可视化（v0.9 裸命令自动解析 outputs/latest.json，输出到 task 目录 figures/，
+#    含 pred_vs_true_heatmap / loss_curves / training_growth_panel / per_region_2x2）
+python jpinn.py visualize
 
 # 4) 消融：单区域 vs 双区域 vs 全 4 区域
+#    显式路径（旧方式，仍兼容）；路径已存在时需加 --force 才允许覆盖
 python jpinn.py train --ablation single --epochs 5000 --out checkpoints/single.pt
 python jpinn.py train --ablation two    --epochs 5000 --out checkpoints/two.pt
 python jpinn.py visualize --compare checkpoints/single.pt checkpoints/two.pt checkpoints/jpinn.pt \
@@ -117,8 +123,9 @@ j_pinn_repro/
 ├── tasks/                       # 配方 JSON（用户可编辑）
 │   ├── ablation_recipes.json
 │   └── architecture_sweep_recipes.json
-├── checkpoints/                 # 训练产物（被 .gitignore）
-├── logs/                        # 训练历史 + 图像（被 .gitignore）
+├── checkpoints/                 # 显式路径训练产物（被 .gitignore）
+├── logs/                        # 显式路径训练历史 + 图像（被 .gitignore）
+├── outputs/                     # v0.9 结果管理系统：<ablation>/<task_id>/ 自动归档 + latest.json（被 .gitignore）
 ├── docs/                        # 文档（8 个子目录）
 │   ├── audit/                   # 审计报告 + CODE_BUGS.md
 │   ├── architecture/            # 架构设计文档

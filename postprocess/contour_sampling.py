@@ -113,3 +113,27 @@ def contour_to_tensor(
         torch.as_tensor(n_x, dtype=dtype, device=device),
         torch.as_tensor(n_y, dtype=dtype, device=device),
     )
+
+
+def contour_ds(contour: RectContour, dtype: torch.dtype = torch.float64) -> torch.Tensor:
+    """每点到下一点的真实弧长 ds（v0.9 修复）
+
+    旧版 trapz 用 `torch.arange(len)` 当弧长——两处错误：
+    1. 竖段（长 y_max-y_min）与横段（长 x_wake-x_lig）权重相同，实际长度不同
+    2. 闭合轮廓的末点=首点，但 trapz 不 wrap，闭合项缺失
+       （∮ n_x ds 应精确为 0，旧版恒得 0.5——test_j_exact_matches_trapezoidal 暴露）
+
+    本函数返回 (4n,) 的 ds：第 i 项 = 点 i 到点 i+1 的距离。
+    段间连接点（段末=下段首）距离 0；末点→首点距离 0（闭合）。
+    用法：integral = sum((f[:-1] + f[1:]) / 2 * ds[:-1])
+    """
+    n = contour.n_per_side
+    dy = (contour.y_max - contour.y_min) / (n - 1)
+    dx = (contour.x_wake - contour.x_lig) / (n - 1)
+    ds = np.concatenate([
+        np.full(n - 1, dy), np.zeros(1),   # 段1 竖（y_min→y_max）+ 连接点
+        np.full(n - 1, dx), np.zeros(1),   # 段2 横（x_lig→x_wake）+ 连接点
+        np.full(n - 1, dy), np.zeros(1),   # 段3 竖（y_max→y_min）+ 连接点
+        np.full(n - 1, dx), np.zeros(1),   # 段4 横（x_wake→x_lig）+ 闭合点
+    ])
+    return torch.as_tensor(ds, dtype=dtype)

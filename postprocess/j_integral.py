@@ -46,7 +46,7 @@ import torch
 import torch.nn as nn
 
 from .analytic_J import analytic_grad_T_phys, j_integral_exact
-from .contour_sampling import RectContour, contour_to_tensor
+from .contour_sampling import RectContour, contour_ds, contour_to_tensor
 from .stress_from_T import grad_T_physical, strain_energy_W, stress_analog
 
 
@@ -91,8 +91,9 @@ def _j_integral_pinn_one(
     sigma_dot_n = sig_xx * n_x + sig_xy * n_y
     traction_x = sigma_dot_n * dT_dx
     integrand = W * n_x - traction_x
-    # 梯形积分
-    return float(torch.trapz(integrand, torch.arange(len(integrand), dtype=torch.float64)).item())
+    # v0.9 修复：真实弧长 ds 梯形积分（旧 arange 当弧长 → 竖/横段权重错 + 闭合项缺失）
+    ds = contour_ds(contour, dtype=integrand.dtype)
+    return float(torch.sum((integrand[:-1] + integrand[1:]) * 0.5 * ds[:-1]).item())
 
 
 def j_integral_one_contour(
@@ -277,7 +278,9 @@ def j_integral_mode_decomposed(
         sigma_dot_n_x = sig_xx * n_x + sig_xy * n_y
         sigma_dot_n_y = sig_xy * n_x + sig_yy * n_y
         integrand = W * n_x - sigma_dot_n_x * dT_dx - sigma_dot_n_y * dT_dy
-        return float(torch.trapz(integrand, torch.arange(len(integrand), dtype=torch.float64)).item())
+        # v0.9 修复：真实弧长（与 _j_integral_pinn_one 同）
+        ds = contour_ds(contour, dtype=integrand.dtype)
+        return float(torch.sum((integrand[:-1] + integrand[1:]) * 0.5 * ds[:-1]).item())
 
     J_I = _integrate(sig_xx_sym, sig_yy_sym, sig_xy_sym, dT_dx_asym, dT_dy_asym)
     J_II = _integrate(sig_xx_asym, sig_yy_asym, sig_xy_asym, dT_dx_sym, dT_dy_sym)

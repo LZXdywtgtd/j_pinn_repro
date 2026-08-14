@@ -425,8 +425,11 @@ def estimate_training_time(model, ds, agg, optimizer, device, args,
 --ablation        str   full      # full/two/single
 --hidden          int   64        # 每子网隐藏层宽度（P6 sweep）
 --n_hidden_layers int   4         # 每子网隐藏层数（P6 sweep）
---out             str   checkpoints/jpinn.pt
---log             str   logs/train_history.csv
+# v0.9 结果管理：--out/--log 默认 None → 自动生成 outputs/<ablation>/<task_id>/ 目录
+--out             str   None      # checkpoint 保存路径（默认 outputs/<ablation>/<task_id>/model_best.pt）
+--log             str   None      # 训练历史 CSV（默认 outputs/<ablation>/<task_id>/train_history.csv）
+--output_root     str   outputs   # 结果系统根目录（v0.9 新增）
+--force           flag            # 允许覆盖已存在的显式 --out/--log 路径（默认拒绝；v0.9 新增）
 --seed            int   42
 --print_every     int   500
 --log_plain       flag            # 禁用 ANSI 颜色 + Tee 日志（CI/重定向场景）
@@ -481,7 +484,7 @@ torch.save({
     "scheduler_state_dict": scheduler.state_dict(),
     "rng_state": torch.get_rng_state(),
     "numpy_rng_state": np.random.get_state(),
-}, "checkpoints/jpinn.pt")
+}, "checkpoints/jpinn.pt")  # 显式路径示例；v0.9 默认写入 outputs/<ablation>/<task_id>/model_best.pt
 ```
 
 ---
@@ -491,9 +494,9 @@ torch.save({
 ### 6.1 命令行参数
 
 ```
---checkpoint      str   单 ckpt 模式
+--checkpoint      str   None（v0.9：默认解析 outputs/latest.json 中 full 的最新任务，无则报错）
 --data            str   data/synthetic_thermal.npz
---out_dir         str   logs/figures
+--out_dir         str   None（v0.9：默认 checkpoint 同目录 figures/）
 --compare         list  多 ckpt 消融对比模式
 --compare_labels  list  标签
 ```
@@ -504,8 +507,11 @@ torch.save({
 |---|---|
 | `pred_vs_true_heatmap.png` | 三联：预测 / 真值 / \|相对误差\| |
 | `loss_curves.png` | 6 子图：total + 5 类损失分量 |
-| `per_region_2x2.png` | 4 区域独立预测 |
+| `training_growth_panel.png` | v0.9 新增：4 行面板（损失六分量 / LR 轨迹 / P2 去噪 / 训练速度） |
+| `per_region_2x2.png` | 4 区域独立预测（仅 ablation=full） |
 | `ablation_compare.png` | 多 ckpt E₂ 柱状图 |
+
+> v0.9：默认输出到 checkpoint 同目录 `figures/`（自动归档时即 `outputs/<ablation>/<task_id>/figures/`）；显式 `--out_dir` 仍兼容。
 
 ---
 
@@ -625,6 +631,12 @@ def stress_analog(dT_dx, dT_dy) -> tuple[σ_xx, σ_yy, σ_xy]:
 ### 8.3 CLI 入口
 
 ```bash
+# v0.9 默认方式：裸命令自动解析 outputs/latest.json（full 最新任务），
+# 输出到 task 目录 j_integral/；latest 无记录则报错
+python -m postprocess.run_j_integral \
+    --anchor_mode extremes         # v0.7 阶段 5 (B7)；residual_min 可选
+
+# 显式路径（旧方式，仍兼容）
 python -m postprocess.run_j_integral \
     --checkpoint checkpoints/jpinn.pt \
     --data data/synthetic_thermal.npz \

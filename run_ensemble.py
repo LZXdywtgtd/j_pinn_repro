@@ -28,13 +28,24 @@ def run_restarts(
     base_args: dict,
     cwd: Path,
     seed_base: int = 0,
+    run_dir: Path | None = None,  # v0.9：每次 ensemble 运行的唯一目录
 ) -> list[Path]:
-    """循环 seeds 跑 train.py，返回 checkpoint 路径列表"""
+    """循环 seeds 跑 train.py，返回 checkpoint 路径列表
+
+    v0.9：产物归入 outputs/ensemble/<run_id>/seed_<seed>/，
+    每次运行 run_id 唯一（时间戳+PID），同 seed 重跑不互相覆盖。
+    """
+    import time as _time
+    if run_dir is None:
+        run_id = f"ens_{_time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
+        run_dir = cwd / "outputs" / "ensemble" / run_id
     ckpt_paths = []
     for i in range(n_seeds):
         seed = seed_base + i
-        out = cwd / "checkpoints" / f"seed_{seed}.pt"
-        log = cwd / "logs" / f"seed_{seed}.csv"
+        seed_dir = run_dir / f"seed_{seed}"
+        seed_dir.mkdir(parents=True, exist_ok=True)
+        out = seed_dir / "model_best.pt"
+        log = seed_dir / "train_history.csv"
         cmd = [sys.executable, "train.py", "--seed", str(seed),
                "--out", str(out), "--log", str(log)]
         for k, v in base_args.items():
@@ -103,15 +114,22 @@ def main():
     for i in range(0, len(extra) - 1, 2):
         base_args[extra[i]] = extra[i + 1]
 
-    ckpts = run_restarts(args.n_restarts, base_args, CURRENT_DIR, seed_base=args.seed_base)
+    # v0.9：每次 ensemble 运行独立 run_dir；平均模型也归入该目录
+    import time as _time
+    run_id = f"ens_{_time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
+    run_dir = CURRENT_DIR / "outputs" / "ensemble" / run_id
+    ckpts = run_restarts(args.n_restarts, base_args, CURRENT_DIR,
+                         seed_base=args.seed_base, run_dir=run_dir)
 
     if args.average and ckpts:
-        average_models(ckpts, args.out)
+        avg_out = run_dir / "ensemble_avg.pt"
+        average_models(ckpts, avg_out)
     elif not ckpts:
         print("[ERROR] 所有 restart 都失败")
         return 1
     else:
         print(f"[INFO] 完成 {len(ckpts)} 个 restart（未平均）")
+    print(f"[结果管理] ensemble 输出目录: {run_dir}")
     return 0
 
 

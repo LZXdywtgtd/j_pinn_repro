@@ -104,7 +104,16 @@ j_pinn_repro/
 
 ### 6.2 端到端验证（`python -m postprocess.run_j_integral`）
 
+v0.9 起 `--checkpoint` 默认 None：裸命令自动解析 `outputs/latest.json` 中 full 的最新任务，输出到其 `j_integral/` 子目录；latest 无记录则报错（需先训练或显式传 `--checkpoint`）。
+
 ```bash
+# v0.9 默认方式
+python -m postprocess.run_j_integral \
+    --n_per_side 200 \
+    --x_lig_values -0.9 -0.7 -0.5 -0.3 -0.1 \
+    --x_wake_values 0.1 0.3 0.5 0.7 0.9
+
+# 显式路径（旧方式，仍兼容）
 python -m postprocess.run_j_integral \
     --checkpoint checkpoints/jpinn.pt \
     --data data/synthetic_thermal.npz \
@@ -114,12 +123,12 @@ python -m postprocess.run_j_integral \
     --x_wake_values 0.1 0.3 0.5 0.7 0.9
 ```
 
-**期望输出**：
-- `logs/j_integral/J_raw.png`：PINN 原始 J 曲面（可能含线性漂移）
-- `logs/j_integral/J_corrected.png`：补偿后 J 曲面（应平坦，std/mean < 5%）
-- `logs/j_integral/J_exact.png`：解析场 J 曲面（参考）
-- `logs/j_integral/relative_error.png`：PINN vs 解析 误差
-- `logs/j_integral/metrics.json`：路径无关度 + 相对误差
+**期望输出**（默认输出到 checkpoint 同目录 `j_integral/`；显式 `--out_dir` 时输出到指定目录）：
+- `j_integral/J_raw.png`：PINN 原始 J 曲面（可能含线性漂移）
+- `j_integral/J_corrected.png`：补偿后 J 曲面（应平坦，std/mean < 5%）
+- `j_integral/J_exact.png`：解析场 J 曲面（参考）
+- `j_integral/relative_error.png`：PINN vs 解析 误差
+- `j_integral/metrics.json`：路径无关度 + 相对误差
 
 **质量门控**（CLI 返回码）：
 - rc=0：path_indep_corrected < 10% 且 relative_error_corrected < 50%
@@ -135,7 +144,7 @@ python -m postprocess.run_j_integral \
 | J-integral 物理单位 | K²/m（无量纲对比）| 论文 N/mm；跨 PDE 类型无强约束 |
 | 裂纹尖端位置 | 固定 (0, 0) | 论文 §4.4 默认；与本项目裂纹段中心一致 |
 | 路径无关性图维度 | 3D surface | 论文 Fig.12 风格；直观展示误差补偿 |
-| Checkpoint 依赖 | 必须存在 | 随机初始模型精度差，验证质量没意义 |
+| Checkpoint 依赖 | 必须存在（v0.9：`--checkpoint` 默认从 outputs/latest.json 解析；无则报错） | 随机初始模型精度差，验证质量没意义 |
 | 积分方法 | 梯形法 | 论文未指定；rectangle 是分段线性，梯形足够 |
 | 远场 contour 选择 | (x_lig_min, x_wake_max) | 论文 §4.4 推荐用域边界附近 |
 

@@ -212,9 +212,12 @@ def plot_3d_surface(Z: np.ndarray, x_lig: list, x_wake: list, title: str, save_p
 
 def main():
     p = argparse.ArgumentParser(description="J-PINN J-integral 后处理（论文 §4.4 头条）")
-    p.add_argument("--checkpoint", default="checkpoints/jpinn.pt")
+    # v0.9：默认 None → latest.json 解析（复用 visualize 的解析函数）
+    p.add_argument("--checkpoint", default=None,
+                   help="checkpoint 路径（默认 outputs/latest.json 中 full 的最新任务）")
     p.add_argument("--data", default="data/synthetic_thermal.npz")
-    p.add_argument("--out_dir", default="logs/j_integral")
+    p.add_argument("--out_dir", default=None,
+                   help="输出目录（默认 checkpoint 同目录 j_integral/）")
     p.add_argument("--n_per_side", type=int, default=200)
     p.add_argument("--x_lig_values", type=float, nargs="+",
                    default=[-0.9, -0.7, -0.5, -0.3, -0.1])
@@ -227,6 +230,18 @@ def main():
                    default="extremes",
                    help="远场锚定选择：extremes=min(x_lig)+max(x_wake)；residual_min=|J_raw-J_fit|最小")
     args = p.parse_args()
+    # v0.9：checkpoint 解析：显式 > latest > 报错
+    if args.checkpoint is None:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from visualize import resolve_checkpoint_from_latest
+        args.checkpoint = resolve_checkpoint_from_latest()
+        if args.checkpoint is None:
+            p.error("未指定 --checkpoint 且 outputs/latest.json 无 full 任务。"
+                    "请先训练（python train.py）或显式传 --checkpoint。")
+    # v0.9：out_dir 解析：显式 > checkpoint 同目录 j_integral/ > 旧默认
+    if args.out_dir is None:
+        args.out_dir = os.path.join(os.path.dirname(args.checkpoint) or ".", "j_integral")
 
     metrics = compute_and_save(
         checkpoint=args.checkpoint,

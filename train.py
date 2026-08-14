@@ -75,8 +75,15 @@ def parse_args() -> argparse.Namespace:
     # P6 架构 sweep
     p.add_argument("--hidden", type=int, default=64, help="每子网隐藏层宽度（P6 sweep）")
     p.add_argument("--n_hidden_layers", type=int, default=4, help="每子网隐藏层数（P6 sweep）")
-    p.add_argument("--out", type=str, default="checkpoints/jpinn.pt", help="checkpoint 保存路径")
-    p.add_argument("--log", type=str, default="logs/train_history.csv", help="训练历史 CSV")
+    # v0.9 结果管理：默认 None → 自动生成 outputs/<ablation>/<task_id>/ 目录
+    p.add_argument("--out", type=str, default=None,
+                   help="checkpoint 保存路径（默认 outputs/<ablation>/<task_id>/model_best.pt）")
+    p.add_argument("--log", type=str, default=None,
+                   help="训练历史 CSV（默认 outputs/<ablation>/<task_id>/train_history.csv）")
+    p.add_argument("--output_root", type=str, default="outputs",
+                   help="结果系统根目录（默认 outputs）")
+    p.add_argument("--force", action="store_true",
+                   help="允许覆盖已存在的显式 --out/--log 路径（默认拒绝）")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--print_every", type=int, default=500, help="每 N 个 epoch 打印一行")
     # v0.3 友好化日志
@@ -124,6 +131,7 @@ def parse_args() -> argparse.Namespace:
 # ============================================================
 def main() -> None:
     args = parse_args()
+    args._start_ts = time.strftime("%Y-%m-%d %H:%M:%S")  # v0.9 metadata.json 用
 
     # 续训时优先用 checkpoint 内的 args/seed（避免 silent override）
     resume_state = None
@@ -151,6 +159,44 @@ def main() -> None:
     # 非 resume 或 resume 未传 --epochs：默认 5000
     if args.epochs is None:
         args.epochs = 5000
+
+    # ============================================================
+    # v0.9 结果管理：输出路径解析（resume 处理之后，此时 seed/epochs 已定）
+    # ============================================================
+    resume_in_place = False  # resume 同目录就地续训（CSV 追加）标记
+    task_dir = None          # 自动生成的 task 目录（None = 用户显式路径）
+    if args.out is None:
+        # 自动生成唯一 task 目录
+        task_id = f"jpinn_{args.ablation}_{time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
+        task_dir = os.path.join(args.output_root, args.ablation, task_id)
+        # resume 指向 outputs 内 model_best.pt 且同 ablation → 就地续训
+        resume_parent = os.path.dirname(os.path.dirname(args.resume)) if args.resume else None
+        expected_parent = os.path.abspath(os.path.join(args.output_root, args.ablation))
+        if args.resume and resume_parent and os.path.abspath(resume_parent) == expected_parent:
+            task_dir = os.path.dirname(args.resume)
+            resume_in_place = True
+            print_info(f"[结果管理] 检测到 resume 指向 outputs 内目录，就地续训: {task_dir}")
+        os.makedirs(task_dir, exist_ok=resume_in_place)
+        args.out = os.path.join(task_dir, "model_best.pt")
+        args.log = os.path.join(task_dir, "train_history.csv")
+        print_info(f"[结果管理] 输出目录: {task_dir}")
+    else:
+        # 显式路径：守卫（存在且无 --force → 拒绝）
+        # 例外：--resume 与 --out 指向同一文件 = 旧式就地续训语义，放行
+        same_as_resume = bool(args.resume) and os.path.abspath(args.resume) == os.path.abspath(args.out)
+        if os.path.exists(args.out) and not args.force and not same_as_resume:
+            print(f"[ERROR] 检查点 {args.out} 已存在。")
+            print(f"        使用 --force 覆盖，或 --out 指定新路径，或去掉 --out 用自动目录。")
+            sys.exit(1)
+        if args.log is None:
+            args.log = os.path.join(
+                os.path.dirname(args.out) or ".",
+                "train_history.csv",
+            )
+        elif os.path.exists(args.log) and not args.force and not resume_in_place:
+            print(f"[ERROR] 日志 {args.log} 已存在。")
+            print(f"        使用 --force 覆盖，或 --log 指定新路径。")
+            sys.exit(1)
 
     # 精度与设备
     dtype = torch.float64
@@ -234,15 +280,18 @@ def main() -> None:
 
     # CSV 日志（沿用 v4:1429-1434 + v0.3 扩展 14 列）
     os.makedirs(os.path.dirname(args.log) or ".", exist_ok=True)
-    task_id = f"jpinn_{args.ablation}_{time.strftime('%Y%m%d_%H%M%S')}"
-    log_f = open(args.log, "w", newline="", encoding="utf-8")
+    # v0.9：task_id 复用输出路径解析处的（含 PID）；resume 就地续训时追加写
+    task_id = os.path.basename(task_dir) if task_dir else f"jpinn_{args.ablation}_{time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}"
+    csv_mode = "a" if resume_in_place and os.path.exists(args.log) else "w"
+    log_f = open(args.log, csv_mode, newline="", encoding="utf-8")
     writer = csv.writer(log_f)
-    writer.writerow([
-        "timestamp", "task_id", "ablation", "epoch",
-        "total", "pde", "iface", "tnormal", "bc", "neumann", "smooth",
-        "bc_active_frac", "bc_n_outliers",
-        "lr", "seconds", "eta_seconds", "ema_s",
-    ])
+    if csv_mode == "w":
+        writer.writerow([
+            "timestamp", "task_id", "ablation", "epoch",
+            "total", "pde", "iface", "tnormal", "bc", "neumann", "smooth",
+            "bc_active_frac", "bc_n_outliers",
+            "lr", "seconds", "eta_seconds", "ema_s",
+        ])
 
     # ============================================================
     # 干跑验证（沿用 v4:1532-1680 + D1-fix：无条件回滚状态）
@@ -477,6 +526,53 @@ def main() -> None:
     )
     print_info(f"Checkpoint 保存到: {args.out}")
     log_f.close()
+
+    # ============================================================
+    # v0.9 结果管理：归档 config / metadata / latest 指针（仅自动 task 目录）
+    # ============================================================
+    if task_dir is not None:
+        import json as _json
+        import subprocess as _sp
+
+        # config.json：完整 argparse vars + git commit
+        _config = dict(vars(args))
+        try:
+            _git_commit = _sp.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True, text=True, timeout=10,
+            ).stdout.strip()
+        except Exception:
+            _git_commit = "unknown"
+        _config["git_commit"] = _git_commit
+        with open(os.path.join(task_dir, "config.json"), "w", encoding="utf-8") as f:
+            _json.dump(_config, f, ensure_ascii=False, indent=2)
+
+        # metadata.json：起止时间、best_loss、完成状态
+        metadata = {
+            "task_id": task_id,
+            "ablation": args.ablation,
+            "started_at": getattr(args, "_start_ts", "unknown"),
+            "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "best_loss": float(best_loss),
+            "completed_epoch": int(completed_epoch),
+            "target_epochs": int(args.epochs),
+        }
+        with open(os.path.join(task_dir, "metadata.json"), "w", encoding="utf-8") as f:
+            _json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+        # latest.json：更新当前 ablation 的指针
+        latest_path = os.path.join(args.output_root, "latest.json")
+        latest = {}
+        if os.path.exists(latest_path):
+            try:
+                with open(latest_path, "r", encoding="utf-8") as f:
+                    latest = _json.load(f)
+            except Exception:
+                latest = {}
+        latest[args.ablation] = task_id
+        with open(latest_path, "w", encoding="utf-8") as f:
+            _json.dump(latest, f, ensure_ascii=False, indent=2)
+        print_info(f"[结果管理] 归档完成: {task_dir}（config/metadata/latest 已写）")
 
 
 if __name__ == "__main__":

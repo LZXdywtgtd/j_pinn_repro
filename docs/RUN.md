@@ -136,14 +136,26 @@ python tests/smoke_test.py
 
 ### 4.1 单行命令（Git Bash / PowerShell / cmd 三环境通用）
 
+**v0.9 默认方式**（裸命令自动归档到 `outputs/<ablation>/<task_id>/`，后处理自动解析 `outputs/latest.json`）：
+
 ```bash
 python data/generate_synthetic_thermal_data.py
 python train.py --epochs 5000 --ablation full
+python visualize.py
+python -m postprocess.run_j_integral --anchor_mode extremes
+```
+
+**显式路径（旧方式，仍兼容）**：
+
+```bash
+python train.py --epochs 5000 --ablation full --out checkpoints/jpinn.pt
 python visualize.py --checkpoint checkpoints/jpinn.pt
 python -m postprocess.run_j_integral --checkpoint checkpoints/jpinn.pt --anchor_mode extremes
 ```
 
 **禁用反斜杠续行**（cmd 不识别 `\`）。如要传多个 flag，**全写在一行**，用空格分隔。
+
+**`--force` 说明**：显式 `--out`/`--log` 路径已存在时，不加 `--force` 会拒绝覆盖（防误删旧结果）；加 `--force` 才允许覆盖。自动归档目录每次任务唯一，不需要 `--force`。
 
 ### 4.2 关键 flag 映射表
 
@@ -151,30 +163,79 @@ python -m postprocess.run_j_integral --checkpoint checkpoints/jpinn.pt --anchor_
 |---|---|---|---|
 | `train.py` | `--epochs` | None（兜底 5000） | [train.py:59](train.py:59) |
 | `train.py` | `--ablation` | `full` | [train.py:72](train.py:72) |
-| `train.py` | `--out` | `checkpoints/jpinn.pt` | [train.py:78](train.py:78) |
-| `train.py` | `--log` | `logs/train_history.csv` | [train.py:79](train.py:79) |
-| `visualize.py` | `--checkpoint` | `checkpoints/jpinn.pt` | [visualize.py:49](visualize.py:49) |
-| `visualize.py` | `--out_dir` | `logs/figures` | [visualize.py:51](visualize.py:51) |
-| `run_j_integral` | `--checkpoint` | `checkpoints/jpinn.pt` | [run_j_integral.py:215](postprocess/run_j_integral.py:215) |
-| `run_j_integral` | `--out_dir` | `logs/j_integral` | [run_j_integral.py:217](postprocess/run_j_integral.py:217) |
+| `train.py` | `--out` | None（自动 `outputs/<ablation>/<task_id>/model_best.pt`） | [train.py:79](train.py:79) |
+| `train.py` | `--log` | None（自动 `outputs/<ablation>/<task_id>/train_history.csv`） | [train.py:81](train.py:81) |
+| `train.py` | `--output_root` | `outputs` | [train.py:83](train.py:83) |
+| `train.py` | `--force` | 关（显式路径已存在时拒绝覆盖） | [train.py:85](train.py:85) |
+| `visualize.py` | `--checkpoint` | None（自动解析 `outputs/latest.json` 中 full 的最新任务；无则报错） | [visualize.py:71](visualize.py:71) |
+| `visualize.py` | `--out_dir` | None（默认 checkpoint 同目录 `figures/`） | [visualize.py:74](visualize.py:74) |
+| `run_j_integral` | `--checkpoint` | None（自动解析 `outputs/latest.json`；无则报错） | [run_j_integral.py:216](postprocess/run_j_integral.py:216) |
+| `run_j_integral` | `--out_dir` | None（默认 checkpoint 同目录 `j_integral/`） | [run_j_integral.py:219](postprocess/run_j_integral.py:219) |
 | `run_j_integral` | `--n_per_side` | 200 | [run_j_integral.py:218](postprocess/run_j_integral.py:218) |
 | `run_j_integral` | `--anchor_mode` | `extremes` | [run_j_integral.py:226](postprocess/run_j_integral.py:226) |
 
 ### 4.3 产出清单
 
+**v0.9 自动归档**（裸 `python train.py --ablation full`）：
+
+| 文件 | 来源 |
+|---|---|
+| `outputs/full/<task_id>/model_best.pt` | train.py save（task_id 含时间戳+PID，每次训练唯一） |
+| `outputs/full/<task_id>/train_history.csv` | 每 epoch 损失分量（16 列） |
+| `outputs/full/<task_id>/config.json` | 完整 argparse + git commit |
+| `outputs/full/<task_id>/metadata.json` | 起止时间 / best_loss / completed_epoch |
+| `outputs/latest.json` | 每个 ablation 的最新 task_id 指针 |
+| `outputs/full/<task_id>/figures/{pred_vs_true_heatmap,loss_curves,training_growth_panel,per_region_2x2}.png` | visualize.py 裸命令（`--out_dir` 默认 checkpoint 同目录） |
+| `outputs/full/<task_id>/j_integral/{J_raw,J_corrected,J_exact,relative_error}.png` + `metrics.json` | run_j_integral.py 裸命令 |
+
+**显式路径（旧方式，仍兼容）**：
+
 | 文件 | 来源 |
 |---|---|
 | `data/synthetic_thermal.npz` | `generate_synthetic_thermal_data.main()` [L151](data/generate_synthetic_thermal_data.py:151) |
-| `checkpoints/jpinn.pt` | `train.py` save |
-| `logs/train_history.csv` | Tee 日志 |
-| `logs/figures/{pred_vs_true_heatmap,loss_curves,per_region_2x2}.png` | visualize.py 单 ckpt 模式 |
-| `logs/j_integral/{J_raw,J_corrected,J_exact,relative_error}.png` + `metrics.json` | run_j_integral.py |
+| `checkpoints/jpinn.pt` | `python train.py --out checkpoints/jpinn.pt` |
+| `logs/train_history.csv` | 显式 `--log`（或 `--out` 同目录 `train_history.csv`） |
+| `logs/figures/{pred_vs_true_heatmap,loss_curves,training_growth_panel,per_region_2x2}.png` | `python visualize.py --checkpoint checkpoints/jpinn.pt --out_dir logs/figures` |
+| `logs/j_integral/{J_raw,J_corrected,J_exact,relative_error}.png` + `metrics.json` | `python -m postprocess.run_j_integral --checkpoint checkpoints/jpinn.pt --out_dir logs/j_integral` |
+
+---
+
+## 4.4 outputs/ 结果管理系统（v0.9）
+
+```
+outputs/
+├── latest.json                  # 每个 ablation 的最新 task_id 指针
+├── full/                        # ablation 名 = 子目录名
+│   └── jpinn_full_20260814_101530_12345/   # task_id（时间戳+PID，每次训练唯一）
+│       ├── model_best.pt
+│       ├── train_history.csv
+│       ├── config.json          # 完整 argparse + git commit
+│       ├── metadata.json        # 起止时间 / best_loss / completed_epoch
+│       ├── figures/             # visualize.py 默认输出（checkpoint 同目录）
+│       └── j_integral/          # run_j_integral.py 默认输出（checkpoint 同目录）
+├── single/ ...                  # 其他 ablation 同构
+├── two/ ...
+└── ensemble/
+    └── ens_20260814_101530_12345/   # run_ensemble.py 每次运行的 run_id
+        └── seed_<seed>/
+            ├── model_best.pt
+            └── train_history.csv
+```
+
+**规则**：
+- 裸 `train.py`（不带 `--out`）自动生成 `outputs/<ablation>/<task_id>/`，归档 model_best.pt / train_history.csv / config.json / metadata.json，并更新 `outputs/latest.json`
+- 裸 `visualize.py` / `run_j_integral`（不带 `--checkpoint`）自动解析 `latest.json` 中对应 ablation 的最新任务，无则报错；`--out_dir` 默认 checkpoint 同目录
+- 显式 `--out`/`--checkpoint` 路径 = 旧方式，仍完全兼容
+- 显式路径已存在且无 `--force` → 拒绝覆盖（train.py 退出码 1）
+- `--resume` 指向 outputs 内同 ablation 的 model_best.pt → 就地续训（CSV 追加）
 
 ---
 
 ## 5. C. 消融对比（可选，~3.5 小时）
 
 **目的**：复现论文 §4.6 消融研究（Table 4）。
+
+> v0.9 起，不带 `--out` 的裸命令会自动归档到 `outputs/<ablation>/<task_id>/`（各 ablation 互不覆盖）。本节的显式路径写法（旧方式，仍兼容）重复跑时需加 `--force`，否则已存在的路径会被拒绝覆盖。
 
 Git Bash（推荐后台跑）：
 ```bash
@@ -239,7 +300,7 @@ xelatex -interaction=nonstopmode main.tex
 | `RuntimeError: element 0 of tensors does not require grad` | `python -m postprocess.run_j_integral --checkpoint checkpoints/jpinn.pt` | `_j_integral_pinn_one` 用 `@torch.no_grad()` 与 `grad_T` 互斥 | ✅ 已修（v0.8 阶段 7，移除装饰器 + `retain_graph=True`） |
 | `LinAlgError: Incompatible dimensions` | `python -m postprocess.run_j_integral --anchor_mode extremes` | `x_lig_arr` 5 长与 `J_pinn_grid` (5,5) 不匹配 | ✅ 已修（v0.8 阶段 7，扁平化 + tile/repeat） |
 | 训练发散（NaN） | `python train.py --epochs 5000` | λ_pde 太大 | `--lambda_pde 50` |
-| PDE 残差不收敛 | 训练后看 logs/train_history.csv pde 列 | λ_pde 太小 | `--lambda_pde 200` |
+| PDE 残差不收敛 | 训练后看 `outputs/<ablation>/<task_id>/train_history.csv`（显式路径训练则看 logs/train_history.csv）pde 列 | λ_pde 太小 | `--lambda_pde 200` |
 | 显存/内存溢出 | 大 batch | N_int 太大 | `--N_int 1000` |
 
 ---
@@ -269,6 +330,8 @@ conda activate jpinn && chcp 65001 && cd D:\team_project\j_pinn_repro && python 
 
 **总耗时：~75 分钟**（1 分钟 smoke + 30 秒数据 + 71.5 分钟训练 + 10 秒可视化 + 30 秒 J 积分）
 
+> v0.9 起：裸命令自动归档到 `outputs/full/<task_id>/`，`visualize.py` / `run_j_integral` 不带 `--checkpoint` 时自动解析 `outputs/latest.json`（本节即默认方式）。
+
 ### Git Bash
 ```bash
 conda activate jpinn
@@ -276,8 +339,8 @@ cd /d/team_project/j_pinn_repro
 python tests/smoke_test.py
 python data/generate_synthetic_thermal_data.py
 python train.py --epochs 5000 --ablation full
-python visualize.py --checkpoint checkpoints/jpinn.pt
-python -m postprocess.run_j_integral --checkpoint checkpoints/jpinn.pt --anchor_mode extremes
+python visualize.py
+python -m postprocess.run_j_integral --anchor_mode extremes
 ```
 
 ### cmd
@@ -288,8 +351,8 @@ cd D:\team_project\j_pinn_repro
 python tests\smoke_test.py
 python data\generate_synthetic_thermal_data.py
 python train.py --epochs 5000 --ablation full
-python visualize.py --checkpoint checkpoints/jpinn.pt
-python -m postprocess.run_j_integral --checkpoint checkpoints/jpinn.pt --anchor_mode extremes
+python visualize.py
+python -m postprocess.run_j_integral --anchor_mode extremes
 ```
 
 ---

@@ -81,12 +81,17 @@ def filter_tasks(tasks: list[dict], only_id: str | None) -> list[dict]:
 
 
 def run_one_ablation(task: dict, extra_args: list[str], cwd: Path) -> int:
-    """启动 train.py 子进程跑一个 ablation；返回 returncode"""
+    """启动 train.py 子进程跑一个 ablation；返回 returncode
+
+    v0.9：recipes 不再含 --out/--log → 子进程走自动 outputs/<ablation>/<task_id>/；
+    编排器统一追加 --force 表示"批量编排 = 显式再产意图"（防显式路径守卫卡住重复批跑）。
+    """
     args_dict = task["args"]
     # 构造命令行：python train.py <flag1 val1> <flag2 val2> ...
     cmd = [sys.executable, "train.py"]
     for k, v in args_dict.items():
         cmd += [str(k), str(v)]
+    cmd += ["--force"]
     cmd += extra_args
 
     print(f"\n{'=' * 70}")
@@ -179,14 +184,28 @@ def main() -> int:
         if all_failed:
             print(f"\n[WARNING] {len(all_failed)} 个 ablation 失败：{all_failed}")
 
-    # 收集 checkpoint 用于可视化
+    # 收集 checkpoint 用于可视化（v0.9：自动 task 目录 → 从 outputs/latest.json 解析）
     checkpoints = []
     labels = []
+    latest_path = CURRENT_DIR / "outputs" / "latest.json"
+    latest_map = {}
+    if latest_path.exists():
+        import json as _json
+        try:
+            with open(latest_path, "r", encoding="utf-8") as f:
+                latest_map = _json.load(f)
+        except Exception:
+            latest_map = {}
     for t in tasks_to_run:
-        ckpt = Path(t["args"].get("--out", ""))
+        ablation = t["args"].get("--ablation", "full")
+        task_id = latest_map.get(ablation)
+        if task_id:
+            ckpt = CURRENT_DIR / "outputs" / ablation / task_id / "model_best.pt"
+        else:
+            ckpt = Path(t["args"].get("--out", ""))  # 旧式显式路径兜底
         if ckpt.exists():
             checkpoints.append(ckpt)
-            labels.append(t["args"]["--ablation"])
+            labels.append(ablation)
 
     if len(checkpoints) >= 2:
         rc = run_visualize(checkpoints, labels, CURRENT_DIR / "logs" / "figures")

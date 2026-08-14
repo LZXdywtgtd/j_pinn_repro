@@ -42,17 +42,54 @@ import matplotlib.pyplot as plt
 
 
 # ============================================================
+# ============================================================
+# v0.9 结果管理：latest 解析
+# ============================================================
+def resolve_checkpoint_from_latest(output_root: str = "outputs", ablation: str = "full") -> str | None:
+    """从 outputs/latest.json 解析最新 checkpoint；无则返回 None"""
+    latest_path = os.path.join(output_root, "latest.json")
+    if not os.path.exists(latest_path):
+        return None
+    import json
+    try:
+        with open(latest_path, "r", encoding="utf-8") as f:
+            latest = json.load(f)
+    except Exception:
+        return None
+    task_id = latest.get(ablation)
+    if not task_id:
+        return None
+    ckpt = os.path.join(output_root, ablation, task_id, "model_best.pt")
+    return ckpt if os.path.exists(ckpt) else None
+
+
 # 命令行
 # ============================================================
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="J-PINN 可视化")
-    p.add_argument("--checkpoint", type=str, default="checkpoints/jpinn.pt")
+    # v0.9：默认 None → latest.json 解析 → 报错提示
+    p.add_argument("--checkpoint", type=str, default=None,
+                   help="checkpoint 路径（默认 outputs/latest.json 中 full 的最新任务）")
     p.add_argument("--data", type=str, default="data/synthetic_thermal.npz")
-    p.add_argument("--out_dir", type=str, default="logs/figures")
+    p.add_argument("--out_dir", type=str, default=None,
+                   help="输出目录（默认 checkpoint 同目录 figures/）")
     p.add_argument("--compare", type=str, nargs="*", default=None,
                    help="消融对比：传多个 checkpoint 路径，如 --compare a.pt b.pt c.pt")
     p.add_argument("--compare_labels", type=str, nargs="*", default=None)
-    return p.parse_args()
+    args = p.parse_args()
+    # checkpoint 解析：显式 > latest > 报错
+    if args.checkpoint is None and args.compare is None:
+        args.checkpoint = resolve_checkpoint_from_latest()
+        if args.checkpoint is None:
+            p.error("未指定 --checkpoint 且 outputs/latest.json 无 full 任务。"
+                    "请先训练（python train.py）或显式传 --checkpoint。")
+    # out_dir 解析：显式 > checkpoint 同目录 figures/ > 旧默认
+    if args.out_dir is None:
+        if args.checkpoint:
+            args.out_dir = os.path.join(os.path.dirname(args.checkpoint) or ".", "figures")
+        else:
+            args.out_dir = "logs/figures"
+    return args
 
 
 # ============================================================
@@ -145,6 +182,10 @@ def plot_loss_curves(csv_path: str, out_path: str):
             bc.append(float(row["bc"]))
             neum.append(float(row["neumann"]))
             smooth.append(float(row["smooth"]))
+    # v0.8 阶段 9 修复：空 CSV（0 行数据）时直接跳过，避免 vals_arr.max() 对空数组崩溃
+    if len(epochs) == 0:
+        print(f"  [skip] loss_curves: {csv_path} 是空文件（0 行数据），可能训练未正常写盘")
+        return
 
     fig, axes = plt.subplots(2, 3, figsize=(15, 7))
     series = [
@@ -171,6 +212,102 @@ def plot_loss_curves(csv_path: str, out_path: str):
         ax.set_xlabel("epoch")
         ax.grid(True, alpha=0.3)
     fig.suptitle("Training loss components (log/symlog scale)")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+
+
+# ============================================================
+# v0.9 完整成长面板：损失六分量 / LR 轨迹 / P2 去噪 / 训练速度
+# ============================================================
+def plot_training_growth(csv_path: str, out_path: str):
+    """4 行面板，复用 train_history.csv 的 16 列（无 schema 变更）：
+    1. 损失六分量（log/symlog）
+    2. 学习率轨迹（loss_prop 调度器随损失衰减）
+    3. P2 去噪过程（bc_active_frac + bc_n_outliers 双轴）
+    4. 训练速度（seconds/epoch，EMA 平滑）
+    """
+    if not os.path.exists(csv_path):
+        print(f"  [skip] growth_panel: {csv_path} 不存在")
+        return
+    import csv as _csv
+    epochs, lr, active_frac, n_outliers, seconds = [], [], [], [], []
+    with open(csv_path, "r", encoding="utf-8") as f:
+        reader = _csv.DictReader(f)
+        for row in reader:
+            epochs.append(int(row["epoch"]))
+            lr.append(float(row["lr"]))
+            active_frac.append(float(row["bc_active_frac"]))
+            n_outliers.append(int(row["bc_n_outliers"]))
+            seconds.append(float(row["seconds"]))
+    if len(epochs) == 0:
+        print(f"  [skip] growth_panel: {csv_path} 是空文件（0 行数据）")
+        return
+
+    fig, axes = plt.subplots(4, 1, figsize=(12, 14), sharex=True)
+
+    # 行 1：损失六分量
+    ax = axes[0]
+    total, pde, iface, bc, neum, smooth = [], [], [], [], [], []
+    with open(csv_path, "r", encoding="utf-8") as f:
+        reader = _csv.DictReader(f)
+        for row in reader:
+            total.append(float(row["total"]))
+            pde.append(float(row["pde"]))
+            iface.append(float(row["iface"]))
+            bc.append(float(row["bc"]))
+            neum.append(float(row["neumann"]))
+            smooth.append(float(row["smooth"]))
+    for vals, label, color in [
+        (total, "total", "tab:blue"), (pde, "pde", "tab:orange"),
+        (iface, "iface", "tab:green"), (bc, "bc", "tab:red"),
+        (neum, "neumann", "tab:purple"), (smooth, "smooth", "tab:brown"),
+    ]:
+        ax.plot(epochs, vals, linewidth=1.0, label=label, color=color)
+    ax.set_yscale("symlog")
+    ax.set_ylabel("loss")
+    ax.set_title("1) 损失六分量")
+    ax.legend(ncol=6, fontsize=8)
+    ax.grid(True, alpha=0.3)
+
+    # 行 2：学习率轨迹
+    ax = axes[1]
+    ax.plot(epochs, lr, linewidth=1.0, color="tab:cyan")
+    ax.set_yscale("log")
+    ax.set_ylabel("lr")
+    ax.set_title("2) 学习率轨迹（loss_prop 随损失衰减）")
+    ax.grid(True, alpha=0.3)
+
+    # 行 3：P2 去噪过程（双轴）
+    ax = axes[2]
+    ax.plot(epochs, active_frac, linewidth=1.0, color="tab:green", label="active_frac")
+    ax.set_ylabel("bc_active_frac")
+    ax.set_ylim(0, 1.05)
+    ax.set_title("3) P2 边界去噪过程")
+    ax.grid(True, alpha=0.3)
+    ax2 = ax.twinx()
+    ax2.plot(epochs, n_outliers, linewidth=0.8, color="tab:red", label="n_outliers", alpha=0.6)
+    ax2.set_ylabel("bc_n_outliers（当轮剔除）", color="tab:red")
+    ax2.tick_params(axis="y", labelcolor="tab:red")
+    lines1, labels1 = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1 + lines2, labels1 + labels2, fontsize=8, loc="upper right")
+
+    # 行 4：训练速度（EMA 平滑）
+    ax = axes[3]
+    ax.plot(epochs, seconds, linewidth=0.6, color="tab:gray", alpha=0.5, label="raw")
+    # 简单 EMA（α=0.1）
+    ema = [seconds[0]]
+    for s in seconds[1:]:
+        ema.append(0.1 * s + 0.9 * ema[-1])
+    ax.plot(epochs, ema, linewidth=1.5, color="tab:blue", label="EMA(α=0.1)")
+    ax.set_ylabel("seconds/epoch")
+    ax.set_xlabel("epoch")
+    ax.set_title("4) 训练速度")
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+
+    fig.suptitle("训练成长面板（Train History 16 列全景）")
     fig.tight_layout()
     fig.savefig(out_path, dpi=120, bbox_inches="tight")
     plt.close(fig)
@@ -279,12 +416,20 @@ def main():
     print(f"  max|err|={max_err:.4f}  RMSE={e2:.4f}")
     print(f"  保存: {out1}")
 
-    # 图 2：损失曲线
-    csv_path = "logs/train_history.csv"
+    # 图 2：损失曲线（v0.9：CSV 优先 checkpoint 同目录，回退旧路径）
+    csv_path = os.path.join(os.path.dirname(args.checkpoint) or ".", "train_history.csv")
+    if not os.path.exists(csv_path):
+        csv_path = "logs/train_history.csv"  # 回退旧显式路径训练的历史 CSV
     out2 = os.path.join(args.out_dir, "loss_curves.png")
     plot_loss_curves(csv_path, out2)
     if os.path.exists(out2):
         print(f"  保存: {out2}")
+
+    # 图 2b（v0.9）：完整成长面板（损失/LR/去噪/速度）
+    out2b = os.path.join(args.out_dir, "training_growth_panel.png")
+    plot_training_growth(csv_path, out2b)
+    if os.path.exists(out2b):
+        print(f"  保存: {out2b}")
 
     # 图 3：4 区域子图
     if state.get("ablation", "full") == "full":

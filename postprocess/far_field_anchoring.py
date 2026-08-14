@@ -86,10 +86,16 @@ def compensate_j_surface(
         x_lig, x_wake: contour 参数数组（1D）
         J: J 积分值数组（与 x_lig 同长）
         x_lig_far, x_wake_far: 远场 contour 参数（域边界附近）
+
+    v0.9 修复：移除 `+ J_far` 项。旧版 J_far = 拟合平面在远场的值，
+    再把它加回去等价于"先减去拟合平面、再加回平面在远场的值"——
+    在远场点处得到 J_raw(far) + 平面(far)，双倍计数远场平面值，
+    导致 J 量级整体偏大（test_far_field_anchoring_corrects_drift 暴露）。
+    正确的锚定是纯去趋势：J_corrected = J_raw - drift，
+    在远场点处自然等于 J_raw(far)（漂移项为 0）。
     """
     a, b_lig, b_wake = fit_linear_drift(x_lig, x_wake, J)
-    J_far = a + b_lig * x_lig_far + b_wake * x_wake_far  # 远场 raw J
-    J_corrected = J - b_lig * (x_lig - x_lig_far) - b_wake * (x_wake - x_wake_far) + J_far
+    J_corrected = J - b_lig * (x_lig - x_lig_far) - b_wake * (x_wake - x_wake_far)
     return J_corrected
 
 

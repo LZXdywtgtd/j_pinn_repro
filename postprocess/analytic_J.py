@@ -30,7 +30,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from .contour_sampling import RectContour, contour_to_tensor
+from .contour_sampling import RectContour, contour_ds, contour_to_tensor
 
 
 @torch.no_grad()
@@ -65,7 +65,11 @@ def analytic_grad_T_phys(
     cold_xy: tuple[float, float] = (0.6, -0.5),
     eps: float = 1e-4,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """解析 ∂T/∂x_phys, ∂T/∂y_phys（用于 analytic_J）"""
+    """解析 ∂T/∂x_phys, ∂T/∂y_phys（用于 analytic_J）
+
+    v0.9：新增 eps 参数（默认 1e-4 保持兼容）。
+    eps=0 时场严格调和（∇²log r = 0），测试路径无关性需传 eps=0。
+    """
     r_hot = torch.sqrt((x_norm - hot_xy[0]) ** 2 + (y_norm - hot_xy[1]) ** 2 + eps)
     r_cold = torch.sqrt((x_norm - cold_xy[0]) ** 2 + (y_norm - cold_xy[1]) ** 2 + eps)
     # ∂/∂x log(r_hot) = (x - x_hot) / r_hot²
@@ -78,13 +82,19 @@ def analytic_grad_T_phys(
 def j_integral_exact(
     contour: RectContour,
     include_crack: bool = False,
+    hot_xy: tuple[float, float] = (-0.6, 0.5),
+    cold_xy: tuple[float, float] = (0.6, -0.5),
+    eps: float = 1e-4,
 ) -> float:
     """对合成 log 源场（含/不含裂纹间断）跑 J 积分（数值积分 + 解析 ∂T/∂x）
+
+    v0.9：新增 hot_xy/cold_xy/eps 参数（默认保持兼容）。
+    测试远源场（源在 contour 外）传 eps=0 + 远源坐标。
 
     返回 1 个 float
     """
     x, y, n_x, n_y = contour_to_tensor(contour)
-    dT_dx, dT_dy = analytic_grad_T_phys(x, y)
+    dT_dx, dT_dy = analytic_grad_T_phys(x, y, hot_xy=hot_xy, cold_xy=cold_xy, eps=eps)
     # σ_ij = (∂T/∂x_i)(∂T/∂x_j)
     sig_xx = dT_dx ** 2
     sig_yy = dT_dy ** 2
@@ -96,17 +106,26 @@ def j_integral_exact(
     # σ_ij n_j ∂T/∂x₁ = (σ_xx n_x + σ_xy n_y) · ∂T/∂x
     traction = (sig_xx * n_x + sig_xy * n_y) * dT_dx
     integrand = W * n_x - traction
-    # 梯形积分（每段 n 个点；段间也用梯形连接——首尾点重合）
-    return float(torch.trapz(integrand, torch.arange(len(integrand), dtype=torch.float64)).item())
+    # v0.9 修复：真实弧长 ds 的梯形积分（旧版 torch.trapz 用 arange 当弧长，
+    # 竖/横段权重错 + 闭合项缺失，导致恒定的 0.5 偏移）
+    ds = contour_ds(contour, dtype=integrand.dtype)
+    return float(torch.sum((integrand[:-1] + integrand[1:]) * 0.5 * ds[:-1]).item())
 
 
 def j_integral_exact_surface(
     contours: list[RectContour],
     include_crack: bool = False,
+    hot_xy: tuple[float, float] = (-0.6, 0.5),
+    cold_xy: tuple[float, float] = (0.6, -0.5),
+    eps: float = 1e-4,
 ) -> np.ndarray:
-    """批量计算 J 曲面（返回 (N_lig × N_wake) numpy 数组）"""
+    """批量计算 J 曲面（返回 (N_lig × N_wake) numpy 数组）
+
+    v0.9：新增 hot_xy/cold_xy/eps 透传（默认保持兼容）。
+    """
     N = len(contours)
     J = np.zeros(N, dtype=np.float64)
     for i, c in enumerate(contours):
-        J[i] = j_integral_exact(c, include_crack=include_crack)
+        J[i] = j_integral_exact(c, include_crack=include_crack,
+                                hot_xy=hot_xy, cold_xy=cold_xy, eps=eps)
     return J

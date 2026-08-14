@@ -4,18 +4,15 @@
   "_note_train_args_universal": {
     "--epochs": 5000,
     "--device": "cpu",
-    "--lr": 1e-3,
+    "--lr": 0.001,
     "--print_every": 500
   },
-
   "tasks": [
     {
       "id": "ablation-single-v0.2",
       "name": "单区域 PINN（论文 §4.6 baseline）",
       "args": {
         "--ablation": "single",
-        "--out": "checkpoints/single.pt",
-        "--log": "logs/ablation-single.csv",
         "--epochs": 5000
       },
       "description": "1 个 MLP 覆盖全域；论文预期 E₂ 高（本项目预测：Neumann 卡死）",
@@ -27,8 +24,6 @@
       "name": "上下分割 2 区域（论文 §4.6 中间基线）",
       "args": {
         "--ablation": "two",
-        "--out": "checkpoints/two.pt",
-        "--log": "logs/ablation-two.csv",
         "--epochs": 5000
       },
       "description": "2 个 MLP（upper/lower）；论文预期 E₂ 中等",
@@ -40,8 +35,6 @@
       "name": "4 区域 J-PINN（论文主模型）",
       "args": {
         "--ablation": "full",
-        "--out": "checkpoints/jpinn.pt",
-        "--log": "logs/ablation-full.csv",
         "--epochs": 5000
       },
       "description": "4 个独立 MLP（论文保形）；论文预期 E₂ 最低（0.91%）",

@@ -6,6 +6,49 @@
 
 ---
 
+## [v0.9] - 2026-08-15
+
+> **v0.9 主题**：结果管理系统（outputs/ 归档 + 防覆盖守卫）+ J 积分历史 bug 修复
+
+### Added
+- **outputs/ 结果管理系统**：每次训练自动归档，永不覆盖旧成果
+  - 目录结构：`outputs/<ablation>/<task_id>/`，task_id = `jpinn_{ablation}_{时间戳}_{PID}`（PID 防同秒并行碰撞）
+  - 每任务 4 件套：`model_best.pt` / `train_history.csv` / `config.json`（完整 argparse + git commit）/ `metadata.json`（起止时间、best_loss、完成状态）
+  - `outputs/latest.json`：记录每个 ablation 的最新 task_id（Windows 无特权 symlink，用文件指针替代）
+- `train.py` 新增 `--force` / `--output_root`；`--out`/`--log` 默认改为 None（自动归档）
+  - 显式路径已存在且无 `--force` → 拒绝覆盖（防误删旧结果）
+  - `--resume` 指向 outputs 内 checkpoint → 就地续训（CSV 追加）；指向外部旧 checkpoint → 新 task 目录
+- `visualize.py` / `postprocess/run_j_integral.py` 的 `--checkpoint` 默认改为 None（自动解析 `outputs/latest.json`）
+- **训练成长面板** `training_growth_panel.png`：4 行面板（损失六分量 / 学习率轨迹 / P2 边界去噪 / 训练速度），复用 train_history.csv 已有 16 列
+- `run_ensemble.py` 每次运行独立 `outputs/ensemble/<run_id>/seed_<seed>/` 目录（旧 `checkpoints/seed_*.pt` 会被不同 seed-base 重跑覆盖）
+- `run_ablations.py`：recipes 移除 `--out`/`--log` 键 → 子进程走自动归档；编排器统一追加 `--force`
+- `postprocess/contour_sampling.py` 新增 `contour_ds()`：闭合轮廓真实弧长
+
+### Fixed
+- **J 积分弧长 bug**：`torch.trapz(..., arange)` 把索引当弧长——竖段（y_max-y_min）与横段（x_wake-x_lig）权重相同且闭合项缺失，导致闭合积分 ∮ n_x ds 恒得 0.5 而非 0（`analytic_J` / `_j_integral_pinn_one` / `j_integral_mode_decomposed` 3 处积分点全部修复）
+- **远场锚定双倍计数 bug**：`compensate_j_surface` 的 `+ J_far` 把远场平面值加了两次 → 改为纯去趋势（远场点自然等于 J_raw(far)）
+- `tests/test_run_j_integral_cli.py` skip 死锁：旧 skip 依赖 `checkpoints/jpinn.pt` 固定文件名，默认输出改 outputs/ 后该提示命令永远无法消除 skip → 改为 pytest 临时目录训练 mini checkpoint 自给自足
+- `tests/test_j_integral.py` 4 个历史失败（v0.9 前已存在）：
+  - 2 个真 bug 修复（上述弧长 + 锚定）
+  - 2 个测试假设修正：应力一致性改用双源精确公式；路径无关性改用线性场（热场类比 σ=∇T∇T^T 对一般调和场本就不路径无关，见 ADR-0001）
+
+### Changed
+- `--out`/`--log` 默认 None（旧 `checkpoints/jpinn.pt` + `logs/train_history.csv` 仍可显式指定，向后兼容）
+- `visualize.py` loss_curves 的 CSV 来源改为 checkpoint 同目录（回退旧路径 `logs/train_history.csv`）
+- `analytica_J` 系列函数新增 `hot_xy`/`cold_xy`/`eps` 参数（默认保持兼容）
+- 8 个仓库文档 + 桌面重跑清单同步 outputs/ 新路径与裸命令用法
+
+### 验证记录（不进入 commit message，仅存此档）
+
+- `tests/test_output_management.py`：6/6（裸命令归档 4 件套 / 守卫拒绝 / --force 放行 / latest 更新 / 就地续训 CSV 追加 / 旧路径开新目录）
+- `tests/test_run_j_integral_cli.py`：6/6（mini_ckpt fixture）
+- `tests/test_j_integral.py`：5/5（原 1/5）
+- 快测 29/29 + smoke_test 11/11
+- 回滚反证：旧代码静默覆盖 rc=0；新守卫拒绝 rc=1
+- CLI 端到端：J_exact 远场值 3.68e-15（旧 bug -2.19e+03）
+
+---
+
 ## [v0.8] - 2026-08-14
 
 > **v0.8 主题**：根目录整理 + 统一 CLI 入口

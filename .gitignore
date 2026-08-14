@@ -35,6 +35,10 @@ logs/figures/*
 logs/j_integral/*
 !logs/j_integral/.gitkeep
 
+# v0.9 结果管理系统（outputs/ 归档目录）
+outputs/*
+!outputs/.gitkeep
+
 # === 文档/论文（避免仓库臃肿 + 学术版权） ===
 # 参考论文 PDF 通常体积大且存在版权问题，不入库；本地阅读即可
 docs/*.pdf

@@ -81,10 +81,10 @@ def _cli_ran_successfully(cp: subprocess.CompletedProcess) -> bool:
     return cp.returncode in (0, 1, 2)
 
 
-def test_cli_anchor_mode_extremes_full():
+def test_cli_anchor_mode_extremes_full(mini_ckpt):
     """回归 v0.8 阶段 7 修复：完整 5×5 contour + extremes 模式必须跑通"""
     cp = _run_cli(
-        "--checkpoint", "checkpoints/jpinn.pt",
+        "--checkpoint", mini_ckpt,
         "--anchor_mode", "extremes",
         "--n_per_side", "50",  # 加速（默认 200 太慢）
         "--x_lig_values", "-0.9", "-0.5", "-0.1",
@@ -99,8 +99,9 @@ def test_cli_anchor_mode_extremes_full():
         f"stdout tail: {cp.stdout[-500:]}\n"
         f"stderr tail: {cp.stderr[-500:]}"
     )
-    # 必须产生 metrics.json
-    metrics_path = PROJECT_ROOT / "logs" / "j_integral" / "metrics.json"
+    # 必须产生 metrics.json（v0.9：out_dir 默认 checkpoint 同目录 j_integral/）
+    import os
+    metrics_path = Path(os.path.dirname(mini_ckpt)) / "j_integral" / "metrics.json"
     assert metrics_path.exists(), f"metrics.json 未生成：{metrics_path}"
     # 必须包含 anchor_mode=extremes 的结果
     import json
@@ -112,10 +113,10 @@ def test_cli_anchor_mode_extremes_full():
     print(f"  [OK] extremes 模式跑通：J_pinn_far_field={metrics['J_pinn_far_field']:.4e}")
 
 
-def test_cli_anchor_mode_residual_min():
+def test_cli_anchor_mode_residual_min(mini_ckpt):
     """回归 v0.7 阶段 5 B7：residual_min 模式也必须跑通"""
     cp = _run_cli(
-        "--checkpoint", "checkpoints/jpinn.pt",
+        "--checkpoint", mini_ckpt,
         "--anchor_mode", "residual_min",
         "--n_per_side", "30",
         "--x_lig_values", "-0.9", "-0.1",
@@ -128,10 +129,10 @@ def test_cli_anchor_mode_residual_min():
     print(f"  [OK] residual_min 模式跑通")
 
 
-def test_cli_minimal_contours():
+def test_cli_minimal_contours(mini_ckpt):
     """边界值测试：仅 1 个 contour（最小调用）"""
     cp = _run_cli(
-        "--checkpoint", "checkpoints/jpinn.pt",
+        "--checkpoint", mini_ckpt,
         "--anchor_mode", "extremes",
         "--n_per_side", "20",
         "--x_lig_values", "-0.5",
@@ -143,10 +144,10 @@ def test_cli_minimal_contours():
     print(f"  [OK] 最小 1 contour 调用跑通")
 
 
-def test_cli_n_per_side_small():
+def test_cli_n_per_side_small(mini_ckpt):
     """低 n_per_side：测梯形积分短向量路径"""
     cp = _run_cli(
-        "--checkpoint", "checkpoints/jpinn.pt",
+        "--checkpoint", mini_ckpt,
         "--anchor_mode", "extremes",
         "--n_per_side", "10",  # 极小值
         "--x_lig_values", "-0.5",
@@ -156,10 +157,10 @@ def test_cli_n_per_side_small():
     print(f"  [OK] n_per_side=10 跑通")
 
 
-def test_cli_n_per_side_default():
+def test_cli_n_per_side_default(mini_ckpt):
     """默认 n_per_side=200：验证默认值生效不报错"""
     cp = _run_cli(
-        "--checkpoint", "checkpoints/jpinn.pt",
+        "--checkpoint", mini_ckpt,
         "--anchor_mode", "extremes",
         # 不传 --n_per_side（默认 200）
         "--x_lig_values", "-0.5",
@@ -180,20 +181,30 @@ def test_cli_help_flag():
 
 
 # =============================================================================
-# 测试守护（避免测试在无 checkpoint 时 false-positive 通过）
+# v0.9：session fixture 训练 mini checkpoint（取代旧 skip 死锁）
+# 旧版：skip 依赖 checkpoints/jpinn.pt（固定文件名）——train.py 默认输出
+# 改为 outputs/ 后该提示命令永远无法消除 skip（死锁）。
+# 新版：pytest 临时目录训练 mini checkpoint，测试自给自足。
 # =============================================================================
 import pytest
 
-@pytest.fixture(scope="module", autouse=True)
-def require_checkpoint():
-    """跳过测试如果 checkpoints/jpinn.pt 不存在"""
-    ckpt = PROJECT_ROOT / "checkpoints" / "jpinn.pt"
-    if not ckpt.exists():
-        pytest.skip(
-            f"checkpoints/jpinn.pt 不存在。跑一次 `python train.py --epochs 50 --ablation full` "
-            f"生成 checkpoint 后再跑此测试。"
-        )
-    yield
+@pytest.fixture(scope="module")
+def mini_ckpt(tmp_path_factory):
+    """在 pytest 临时目录训练 mini checkpoint（~40s），返回路径"""
+    import subprocess
+    ckpt = tmp_path_factory.mktemp("mini_train") / "mini.pt"
+    if ckpt.exists():
+        return str(ckpt)
+    cp = subprocess.run(
+        [PYTHON, "train.py", "--epochs", "50", "--ablation", "full",
+         "--out", str(ckpt), "--log", str(ckpt.with_suffix(".csv")),
+         "--log_plain", "--print_every", "1000"],
+        cwd=PROJECT_ROOT,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=300,
+    )
+    assert cp.returncode == 0, f"mini 训练失败 rc={cp.returncode}\n{cp.stderr[-500:]}"
+    return str(ckpt)
 
 
 # =============================================================================
