@@ -31,6 +31,20 @@
   - **测试**：常数场 → loss ≈ 0；线性场（slope=3）两侧 → loss ≈ 0
   - **影响**：训练行为改变——之前学 tanh 跳跃，现在学梯度连续；旧 checkpoint 续训不受影响（loss function 替换独立）
 
+### Added（Stage 4 - B5 + C2）
+- `postprocess/j_integral.py:158-274` 新增 `j_integral_mode_decomposed` 函数（Rigby-Aliabadi 对称/反对称分解）
+  - **论文** §2.2 Eq.9-10：σ_sym / σ_asym 构造 → J_I / J_II 分解
+  - **算法**：T(x,y) + T(x,-y) → T_sym/T_asym → σ_sym/σ_asym → J_I/J_II 积分
+  - **⚠️ 物理意义限制**：热场降维后标量场无 Mode 概念，J_I/J_II 仅为形式分解
+  - **保留用途**：验证分解算法正确性 + 准备反转 ADR-0001 时复用
+  - **测试**：线性场 T=a*x+0.5*y → J_I=1.0, J_II=0.17；JPINN 随机初始化 → J_I+J_II=5.50
+  - **import 兼容**：try `from utils` / except `from ..utils`（v0.3 路径兼容）
+- `docs/dev_reference/api.md §8` 新增后处理模块章节
+  - §8.1 j_integral_mode_decomposed（含 ⚠️⚠️⚠️ 警告 + ADR-0001 反转条件）
+  - §8.2 stress_analog σ_ij = ∇T·∇T^T 文档化（B6）
+  - §8.3 CLI 入口示例
+- `postprocess/j_integral.py` 文件顶部 docstring 加 ⚠️⚠️⚠️ 物理意义限制段
+
 ---
 
 ## [v0.6] - 2026-08-14

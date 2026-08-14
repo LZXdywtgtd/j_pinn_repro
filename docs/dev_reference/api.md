@@ -481,3 +481,88 @@ torch.save({
 ## 7. 测试 (`tests.smoke_test`)
 
 `python tests/smoke_test.py` — 8 步端到端冒烟（30s），输出 `✓ ALL SMOKE TESTS PASSED`。
+
+---
+
+## 8. 后处理模块 (`postprocess`)（v0.3 + v0.7 阶段 4）
+
+### 8.1 J-integral 数值积分
+
+```python
+from postprocess.j_integral import (
+    j_integral_one_contour,         # 单条 contour 的标量 J
+    j_integral_surface,             # 批量：返回 (x_lig_grid, x_wake_grid, J_grid)
+    j_integral_exact_for_surface,   # 解析 J（用于对比 PINN 输出）
+    j_integral_mode_decomposed,     # ⚠️ v0.7 Mode I/II 分解（论文 §2.2 Eq.9-10）
+)
+
+def j_integral_one_contour(
+    model, contour: RectContour, T_min: float, T_max: float, spec=None,
+) -> float:
+    """J = ∮_Γ (W·n_x - σ·n·∂T/∂x) ds（沿 ligament x₁）"""
+
+def j_integral_mode_decomposed(
+    model, contour: RectContour, T_min: float, T_max: float, spec=None,
+) -> tuple[float, float]:
+    """Rigby-Aliabadi 对称/反对称分解 → (J_I, J_II)
+
+    ┌──────────────────────────────────────────────────────────────────┐
+    │ ⚠️⚠️⚠️ 热场降维下的物理意义限制（v0.7 B5+C2）⚠️⚠️⚠️                │
+    │                                                                  │
+    │ 论文 Mode I/II 描述弹性力学裂纹模式：                              │
+    │   Mode I（张开型）：裂纹面法向被拉开（σ_22 拉伸）                  │
+    │   Mode II（滑开型）：裂纹面切向相对滑动（σ_12 剪切）              │
+    │                                                                  │
+    │ 本项目 Laplace ∇²T=0 降维后：                                     │
+    │   - 标量温度场没有"方向性断裂模式"概念                             │
+    │   - σ_ij = ∇T·∇T^T 是几何外积（不是 Hooke 律应力）                │
+    │   - 本函数 J_I / J_II 数值不应解读为 Mode 贡献                     │
+    │                                                                  │
+    │ 本函数保留用途：                                                   │
+    │   1. 验证 Rigby-Aliabadi 分解算法的数学正确性（正交性、路径无关）  │
+    │   2. 准备未来反转 ADR-0001 时直接复用（拿到 DIC 后）              │
+    │                                                                  │
+    │ 反转条件（ADR-0001 §11）：                                         │
+    │   - 获得论文原版 DIC 全场位移数据                                  │
+    │   - 切换 Navier-Cauchy PDE（恢复混合二阶导 + Lamé 参数）           │
+    │   - 届时 J_I / J_II 数值将恢复物理意义                             │
+    └──────────────────────────────────────────────────────────────────┘
+
+    算法（Rigby-Aliabadi 对称/反对称分解）：
+    1. 同时评估 T(x,y) 与 T(x,-y)（裂纹面对称）
+       T_sym = 0.5 * (T(x,y) + T(x,-y))
+       T_asym = 0.5 * (T(x,y) - T(x,-y))
+    2. 对 T_sym 求梯度 → σ_sym = ∇T_sym · ∇T_sym^T
+       对 T_asym 求梯度 → σ_asym = ∇T_asym · ∇T_asym^T
+    3. J_I = ∮ (W_sym·n_x - σ_sym·n·∂T_asym/∂x) ds
+       J_II = ∮ (W_asym·n_x - σ_asym·n·∂T_sym/∂x) ds
+    4. 交叉项正交抵消（数学基础）：J ≈ J_I + J_II
+    """
+```
+
+### 8.2 应力类比（v0.7 B6 文档化）
+
+```python
+from postprocess.stress_from_T import (
+    grad_T, grad_T_physical, stress_analog, strain_energy_W,
+)
+
+def stress_analog(dT_dx, dT_dy) -> tuple[σ_xx, σ_yy, σ_xy]:
+    """σ_ij = ∇T·∇T^T（论文弹性 σ_ij = λ tr(ε) δ_ij + 2μ ε_ij 的降维类比）
+
+    ⚠️ σ_ij = ∇T·∇T^T 是维度简化下的几何外积
+       - 论文 Hooke 律 σ_ij = λ tr(ε) δ_ij + 2μ ε_ij（铝 λ=27070, μ=27481 MPa）
+       - 本项目类比 σ_ij = (∂T/∂x_i)(∂T/∂x_j)（无 λ/μ，纯几何）
+       - 需反转 ADR-0001 切换 Navier-Cauchy 才能恢复物理应力
+    """
+```
+
+### 8.3 CLI 入口
+
+```bash
+python -m postprocess.run_j_integral \
+    --checkpoint checkpoints/jpinn.pt \
+    --data data/synthetic_thermal.npz \
+    --out_dir logs/j_integral \
+    --n_per_side 200
+```
