@@ -39,106 +39,108 @@ def _imread_unicode(path: str) -> np.ndarray:
         raise ImportError("PIL/Pillow 未安装：请运行 `pip install Pillow`")
 
 
+def _largest_block(mask: np.ndarray) -> Tuple[int, int]:
+    """返回最长连续 True 块 (start, end) 半开区间；无 True 时返回 (-1, -1)。"""
+    n = len(mask)
+    best_start, best_len = -1, 0
+    cur_start = -1
+    for i in range(n + 1):
+        v = mask[i] if i < n else False
+        if v:
+            if cur_start < 0:
+                cur_start = i
+        else:
+            if cur_start >= 0:
+                length = i - cur_start
+                if length > best_len:
+                    best_len = length
+                    best_start = cur_start
+                cur_start = -1
+    if best_start < 0:
+        return -1, -1
+    return best_start, best_start + best_len
+
+
 def _detect_physical_region(img: np.ndarray, white_threshold: int = 245) -> Tuple[int, int, int, int]:
     """自动检测物理域（非白像素的方形边界）
 
     COMSOL 温度 PNG：四周有白色 padding（标题/坐标轴/图例），中间是色块域
     返回 (top, bottom, left, right) 像素索引（half-open）
 
-    算法：
-    - 找每行 / 每列非白色像素范围
-    - 用"每列非白像素计数"区分物理域（宽方柱）与色标（窄竖条）
-      * 物理域列的计数 ≈ 物理域高度（大多数行非白）
-      * 色标列的计数 ≈ 色标高度（虽然也高，但宽度窄、且紧贴右缘）
-    - 取计数最大的连续列块作为物理域
+    算法（v0.8 修复，弃用旧"列密度 > 0.5*height"阈值——它会被高温近白区击穿）：
+    - 找所有「连续非白列块」，取**最宽**者为物理域水平范围 [left, right]
+      * 物理域列块最宽（如 1590px）>> 色标条（72px）>> 轴标签（83px）
+      * 只要该列有任意一个非白像素就算有色列，不依赖"每列非白密度"
+    - 在 [left, right] 内找「连续非白行块」，取**最高**者为物理域垂直范围 [top, bottom]
+      * 天然排除顶部标题 / 底部 x 轴标签
+
+    旧算法的问题：真实 COMSOL 图里高温区（inferno 顶端）渲染成近白色，
+    物理域列非白占比仅 ~20%（中位数 33），而色标条 ~57%（中位数 1224），
+    导致色标条被误判为物理域。
     """
     H, W, _ = img.shape
     # 检测非白像素
     is_colored = np.any(img < white_threshold, axis=2)  # (H, W)
-    row_has_color = is_colored.any(axis=1)  # (H,)
     col_has_color = is_colored.any(axis=0)  # (W,)
-    if not row_has_color.any() or not col_has_color.any():
+    if not col_has_color.any():
         # 全部白色 → fallback 中心 70%
         h_lo, h_hi = int(H * 0.15), int(H * 0.85)
         w_lo, w_hi = int(W * 0.15), int(W * 0.85)
         return h_lo, h_hi, w_lo, w_hi
 
-    rows_idx = np.where(row_has_color)[0]
-    top, bottom = int(rows_idx.min()), int(rows_idx.max()) + 1
+    # 1. 最宽的连续列块 = 物理域水平范围
+    left, right = _largest_block(col_has_color)
+    if left < 0:
+        left, right = int(np.where(col_has_color)[0].min()), int(np.where(col_has_color)[0].max()) + 1
 
-    # 每列非白像素计数
-    col_count = is_colored.sum(axis=0)  # (W,)
-    cols_idx = np.where(col_has_color)[0]
-    if len(cols_idx) == 0:
-        return top, bottom, int(W * 0.15), int(W * 0.85)
-
-    # 区分物理域（宽方柱）与色标（窄竖条）：
-    # 物理域列计数 ≈ height（几乎所有行非白），且连续宽度大
-    # 色标列计数也可能 = height，但宽度窄（~20px）
-    height = bottom - top
-    # 取"计数 > 0.5*height"的连续列块
-    thick = col_count > 0.5 * height  # (W,)
-    # 找最宽的连续 thick 块 = 物理域
-    max_start, max_end, cur_start = -1, -1, -1
-    for c in range(W):
-        if thick[c]:
-            if cur_start < 0:
-                cur_start = c
-        else:
-            if cur_start >= 0:
-                if c - cur_start > max_end - max_start:
-                    max_start, max_end = cur_start, c
-                cur_start = -1
-    if cur_start >= 0 and W - cur_start > max_end - max_start:
-        max_start, max_end = cur_start, W
-    if max_start >= 0:
-        left, right = max_start, max_end
-    else:
-        left, right = int(cols_idx.min()), int(cols_idx.max()) + 1
+    # 2. [left, right] 内最长的连续行块 = 物理域垂直范围
+    row_has_color_in_region = is_colored[:, left:right].any(axis=1)  # (H,)
+    top, bottom = _largest_block(row_has_color_in_region)
+    if top < 0:
+        rows = np.where(row_has_color_in_region)[0]
+        top, bottom = int(rows.min()), int(rows.max()) + 1
     return top, bottom, left, right
 
 
 def _detect_colorbar(img: np.ndarray,
                      physical_top: int, physical_bottom: int,
-                     physical_left: int, physical_right: int) -> Tuple[int, int]:
-    """定位色标条（右侧的渐变窄带）
+                     physical_left: int, physical_right: int) -> Tuple[int, int, int, int]:
+    """定位色标条（物理域右侧的渐变窄带）
 
     色标特征：
     - 位于物理域右侧外部
     - 垂直方向有渐变（每行 RGB 不同）
-    - 比物理域窄得多（width ~ 80-200 px）
+    - 比物理域窄得多（width ~ 70-200 px）
 
-    返回 (cb_top, cb_bottom) 像素行索引
+    v0.8 修复：返回完整 (cb_top, cb_bottom, cb_left, cb_right)。
+    旧版只返回垂直范围，丢弃水平位置——而旧调用点假设色标紧贴物理域
+    右侧（cb_left = p_right），真实 COMSOL 图物理域与色标间有 ~58px 白间隙，
+    导致采样带落在空白区，反推出常数场。
+
+    Returns:
+        (cb_top, cb_bottom, cb_left, cb_right) 半开区间
     """
     H, W, _ = img.shape
+    is_colored = np.any(img < 245, axis=2)
     # 在物理域右侧外的范围找（physical_right 之后）
-    cb_search_left = min(physical_right + 10, W - 1)
-    cb_search_right = W
-    if cb_search_left >= cb_search_right - 5:
-        return physical_top, physical_bottom  # fallback
-    # 找列方差大的（渐变条 vs. 纯色背景）
-    region = img[:, cb_search_left:cb_search_right, :]  # (H, W', 3)
-    # 每列的"行间方差"（高 → 渐变条）
-    col_variance = region.var(axis=0).sum(axis=1)  # (W',)
-    if col_variance.max() < 10:
-        return physical_top, physical_bottom  # fallback
-    cb_col_start = cb_search_left + int(col_variance.argmax())
-    # 在色标列附近 ~50px 范围内都视为色标
-    cb_top_candidates = []
-    cb_bottom_candidates = []
-    for c in range(max(cb_col_start - 30, 0), min(cb_col_start + 30, W)):
-        col_pixels = img[:, c, :]
-        col_is_colored = np.any(col_pixels < 245, axis=1)
-        idx = np.where(col_is_colored)[0]
-        if len(idx) > 0:
-            cb_top_candidates.append(int(idx.min()))
-            cb_bottom_candidates.append(int(idx.max()))
-    if not cb_top_candidates:
-        return physical_top, physical_bottom
-    # 限制在物理域垂直范围（避免标题 / 文本混入）
-    cb_top = max(min(cb_top_candidates), physical_top)
-    cb_bottom = min(max(cb_bottom_candidates), physical_bottom)
-    return cb_top, cb_bottom
+    if physical_right >= W - 5:
+        return physical_top, physical_bottom, W - 1, W  # fallback
+
+    # 1. 找物理域右侧的第一个有色列块 = 色标条水平范围
+    col_has_color = is_colored.any(axis=0)
+    mask_right = np.zeros(W, dtype=bool)
+    mask_right[physical_right:] = col_has_color[physical_right:]
+    cb_left, cb_right = _largest_block(mask_right)
+    if cb_left < 0:
+        return physical_top, physical_bottom, physical_right, W  # fallback
+
+    # 2. 色标条内的非白行范围 = 垂直范围（限在物理域垂直区间内）
+    rows = np.where(is_colored[:, cb_left:cb_right].any(axis=1))[0]
+    if len(rows) == 0:
+        return physical_top, physical_bottom, cb_left, cb_right
+    cb_top = max(int(rows.min()), physical_top)
+    cb_bottom = min(int(rows.max()) + 1, physical_bottom)
+    return cb_top, cb_bottom, cb_left, cb_right
 
 
 def _sample_colorbar(img: np.ndarray,
@@ -246,10 +248,8 @@ def load_comsol_png(
     physical = img[p_top:p_bot, p_left:p_right, :]
     H_phys, W_phys, _ = physical.shape
 
-    # 自动检测色标（在物理域右侧）
-    cb_top, cb_bot = _detect_colorbar(img, p_top, p_bot, p_left, p_right)
-    cb_left = p_right  # 紧贴物理域右侧
-    cb_right = min(cb_left + 50, W)  # 50px 宽的色标搜索带
+    # 自动检测色标（在物理域右侧；v0.8 返回完整 bbox 含水平位置）
+    cb_top, cb_bot, cb_left, cb_right = _detect_colorbar(img, p_top, p_bot, p_left, p_right)
 
     # 采样色标（如果检测失败，fallback 到 inferno colormap）
     try:

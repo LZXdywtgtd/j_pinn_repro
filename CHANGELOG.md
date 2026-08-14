@@ -30,6 +30,20 @@
 ### Removed
 - 根目录 7 个 .py 内部核心模块（移入 `jpinn_core/`）
 
+### Fixed
+- `data/comsol_png_loader.py` **物理域检测 bug**：真实 COMSOL 图（高温区近白）读出全底色常数
+  - 根因：旧算法「每列非白密度 > 0.5×height」阈值——真实图物理域列密度仅 ~20%（高温区在 inferno 顶端渲染成 [255,255,255]），反而色标条 ~57%，色标被误判为物理域
+  - 修复：`_detect_physical_region` 重写为「最宽连续列块 = 物理域水平 + 该区间内最高连续行块 = 垂直」（弃密度阈值）；新增 `_largest_block` 辅助
+- `data/comsol_png_loader.py` **色标定位 bug**：旧 `_detect_colorbar` 只返回垂直范围 + 调用点假设「色标紧贴物理域右侧」，但真实图两者间有 ~58px 白间隙 → 采样带落在空白区
+  - 修复：`_detect_colorbar` 返回完整 bbox `(cb_top, cb_bot, cb_left, cb_right)`；`load_comsol_png` 直接使用检测到的 bbox
+- **实测验证**（`D:/team_project/simulation/参考输入/参数化扫描1/`）：
+  - 温度 001：物理域 bbox (105,1440,135,1725) 宽 1590（旧 bug 宽 50），T ∈ [293.1, 1431.2] K（旧 bug 全 293.15）
+  - d 001：d ∈ [0.0000, 0.9921]；应力 001：σ ∈ [0, 1e9] Pa
+- `tests/test_comsol_png_loader.py` 新增 2 个回归测试（复现真实失败模式：物理域含近白散布 + 色标有间隙）
+  - `test_physical_region_detection_comsol_style`：检测应返回物理域 bbox（而非色标）
+  - `test_load_comsol_png_comsol_style`：端到端读出的 T 范围不再常数
+- `docs/dev_reference/api.md §1.3` 同步检测算法描述 + 真实数据实测记录
+
 ### Preserved（兼容）
 - 旧 CLI 入口（train.py / visualize.py / run_ablations.py / run_ensemble.py / collect_pareto.py）仍可独立运行
 - 历史审计报告（v0.6 / v0.7 paper 对照 / 决策日志）保留原路径引用（历史真实性）

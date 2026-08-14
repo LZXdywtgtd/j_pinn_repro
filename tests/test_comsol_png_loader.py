@@ -81,6 +81,95 @@ def _make_synthetic_png(
     return img
 
 
+def _make_comsol_style_png(
+    H: int = 1500, W: int = 2000,
+    physical_bbox: tuple = (101, 1440, 135, 1725),  # (top, bot, left, right) 真实 COMSOL 图结构
+    colorbar_bbox: tuple = (149, 1424, 1783, 1855),  # 与物理域之间有 ~58px 白间隙
+) -> np.ndarray:
+    """合成一张**复现真实失败模式**的 COMSOL 图（v0.8 回归测试用）
+
+    真实 COMSOL 温度 PNG 的两个关键特征（旧算法因此失败）：
+    1. 物理域内部大片**近白区**（高温区在 inferno 顶端渲染成 [255,255,255]）
+       → 每列非白像素占比仅 ~20%（旧算法"列密度 > 0.5*height"阈值被击穿）
+    2. 色标条密集渐变（每列 ~57% 有色）且与物理域之间有白间隙
+       → 旧算法把色标误判为物理域；旧采样带假设"色标紧贴物理域右侧"也失效
+    """
+    img = np.full((H, W, 3), 255, dtype=np.uint8)  # 全白
+    top, bot, left, right = physical_bbox
+    cb_top, cb_bot, cb_left, cb_right = colorbar_bbox
+
+    # 色标条：密集垂直渐变（模拟真实色标：~57% 行非白）
+    cb_height = cb_bot - cb_top
+    for r in range(cb_top, cb_bot):
+        frac = (r - cb_top) / max(cb_height - 1, 1)
+        # 简化 inferno：蓝(0,0,80) → 黄(255,255,0) → 红(180,0,0)
+        if frac < 0.5:
+            R = int(frac * 2 * 255)
+            G = int(frac * 2 * 255)
+            B = int(255 - frac * 2 * 175)
+        else:
+            R = int(255 - (frac - 0.5) * 2 * 75)
+            G = int(255 - (frac - 0.5) * 2 * 255)
+            B = int(80 - (frac - 0.5) * 2 * 80)
+        for c in range(cb_left, cb_right):
+            img[r, c] = [R, G, B]
+
+    # 物理域：每行散布 ~20% 有色像素（模拟真实图：高温区近白但裂纹线/边界线散布全高）
+    # 真实实测：物理域每列非白像素 6~1353 个（中位数 33），每行几乎都有非白像素
+    rng = np.random.default_rng(42)
+    n_rows = bot - top
+    n_cols = right - left
+    scatter_mask = rng.random((n_rows, n_cols)) < 0.20
+    # 有色像素：蓝色系（低温区颜色），其余保持纯白（高温近白区）
+    for r in range(n_rows):
+        frac = r / max(n_rows - 1, 1)
+        R = int(frac * 60)
+        G = int(frac * 120)
+        B = int(255 - frac * 175)
+        cols = np.where(scatter_mask[r])[0]
+        img[top + r, left + cols, 0] = R
+        img[top + r, left + cols, 1] = G
+        img[top + r, left + cols, 2] = B
+    return img
+
+
+def test_physical_region_detection_comsol_style():
+    """回归测试（v0.8）：物理域含大片近白区 + 色标有间隙 → 应检出物理域而非色标"""
+    img = _make_comsol_style_png()
+    top, bot, left, right = _detect_physical_region(img)
+    # 期望检出物理域 (101, 1440, 135, 1725)，而非色标 (149, 1424, 1783, 1855)
+    assert abs(top - 101) <= 3, f"top={top}，期望 101（物理域顶，非标题/色标顶）"
+    assert abs(bot - 1440) <= 3, f"bot={bot}，期望 1440（物理域底）"
+    assert abs(left - 135) <= 3, f"left={left}，期望 135（物理域左）"
+    assert abs(right - 1725) <= 3, f"right={right}，期望 1725（物理域右）"
+    width = right - left
+    assert width > 1500, f"物理域宽={width}，期望 ~1590（远大于色标 72）"
+    print(f"  ✓ COMSOL 风格物理域检测（含近白区 + 色标间隙）：({top},{bot},{left},{right}) 宽={width}")
+
+
+def test_load_comsol_png_comsol_style(tmp_path):
+    """回归测试（v0.8）：真实失败模式端到端——读出的 T 范围应覆盖 colorbar_range"""
+    import imageio.v2 as imageio
+    png_path = tmp_path / "comsol_style.png"
+    img = _make_comsol_style_png()
+    imageio.imwrite(str(png_path), img)
+    T_field, meta = load_comsol_png(
+        str(png_path),
+        colorbar_range=(293.15, 1431.15),
+        xy_extent=(0.0, 0.01, 0.0, 0.01),
+        warn_uniform=False,
+    )
+    # 形状：物理域 (1440-101, 1725-135) = (1339, 1590)
+    assert T_field.shape == (1339, 1590), f"T_field shape={T_field.shape}，期望 (1339, 1590)"
+    # T 不应是常数（旧 bug 读出全底色 293.15）
+    t_min, t_max = T_field.min(), T_field.max()
+    assert t_max - t_min > 100.0, f"T 范围 {t_min:.1f}~{t_max:.1f} 过窄，疑似读数失败（旧 bug 全 293.15）"
+    # 色标 bbox 应为检测到的完整 bbox（非紧贴物理域的假设带）
+    cb = meta["colorbar_bbox_px"]
+    assert cb[2] > 1700, f"色标左缘 {cb[2]} 应 > 1700（真实图有间隙），疑似仍用旧假设带"
+    print(f"  ✓ COMSOL 风格端到端：T ∈ [{t_min:.1f}, {t_max:.1f}]，色标 bbox={cb}")
+
+
 def test_physical_region_detection():
     """自动检测物理域边界"""
     img = _make_synthetic_png()
@@ -353,6 +442,7 @@ def main():
     print("\n=== P11 COMSOL PNG 加载器单元测试 ===\n")
     tests = [
         ("test_physical_region_detection", test_physical_region_detection),
+        ("test_physical_region_detection_comsol_style", test_physical_region_detection_comsol_style),
         ("test_colorbar_sampling", test_colorbar_sampling),
         ("test_rgb_to_colorbar_position", test_rgb_to_colorbar_position),
         ("test_colorbar_range_required", test_colorbar_range_required),
@@ -370,6 +460,10 @@ def main():
     print("[test_uniform_field_warning]")
     with tempfile.TemporaryDirectory() as td:
         test_uniform_field_warning(Path(td))
+    print()
+    print("[test_load_comsol_png_comsol_style]")
+    with tempfile.TemporaryDirectory() as td:
+        test_load_comsol_png_comsol_style(Path(td))
     print()
     # D1 多扫描测试
     print("\n=== D1 多扫描 batch loader 测试 ===\n")

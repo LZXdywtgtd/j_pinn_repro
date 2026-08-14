@@ -70,7 +70,7 @@ class ThermalDataset:
 }
 ```
 
-### 1.3 `data.comsol_png_loader`（v0.5 完整实现）
+### 1.3 `data.comsol_png_loader`（v0.5 完整实现，v0.8 修复检测算法）
 
 ```python
 def load_comsol_png(
@@ -120,9 +120,21 @@ def load_comsol_scan_dir_as_array(
     """简洁形式：返回 (T_volume (N,H,W) float64, loaded_field_name, meta dict)"""
 ```
 
+**物理域/色标检测算法**（v0.8 修复）：
+- **物理域** = 最宽的连续非白**列块**（[left, right]）+ 该区间内最高的连续非白**行块**（[top, bottom]）
+  - 旧算法用「每列非白密度 > 0.5×height」阈值——真实 COMSOL 图高温区渲染成近白色（inferno 顶端 [255,255,255]），物理域列密度仅 ~20%，反而色标条 ~57% 被误判为物理域（bug：读出全底色常数）
+- **色标条** = 物理域右侧第一个连续非白列块，返回**完整 bbox 含水平位置**
+  - 旧版 `_detect_colorbar` 只返回垂直范围 + 调用点假设「色标紧贴物理域右侧」，但真实图物理域与色标间有 ~58px 白间隙，采样带落在空白区
+- `_largest_block(mask)`：返回最长连续 True 块（start, end 半开区间）
+
 **字段自动检测**（v0.5 用户决策，无硬编码优先级）：
 - `field=None`：扫描子目录数 0 → FileNotFoundError；1 个 → 加载该目录；多个 → 按字母序取第一个 + [INFO] 提示
 - `field="温度"`：严格查找；不存在 → FileNotFoundError
+
+**真实 COMSOL 数据实测**（2026-08-14，`D:/team_project/simulation/参考输入/参数化扫描1/`）：
+- 温度 001：bbox (105,1440,135,1725) 宽1590，T ∈ [293.1, 1431.2] K
+- d 001：d ∈ [0.0000, 0.9921]（归一化损伤）
+- 应力 001：σ ∈ [0, 1e9] Pa
 
 ---
 
