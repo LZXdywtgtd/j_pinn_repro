@@ -175,7 +175,13 @@ def main() -> int:
 
     # Step 10: 端到端续训验证（subprocess 调 train.py --resume）
     step("10) 端到端续训验证（subprocess 调 train.py --resume）")
-    tmpdir = tempfile.mkdtemp(prefix="jpinn_resume_")
+    # 临时目录建在项目 checkpoints/ 下（而非系统 %TEMP%）：
+    # - mkdtemp 保证每次运行唯一（随机后缀），不会多删
+    # - .gitignore 已忽略 checkpoints/*，残留也不会被提交
+    # - finally 里 rmtree 精确锁定本目录，正常退出必删
+    tmpdir = tempfile.mkdtemp(
+        prefix=".smoke_tmp_", dir=os.path.join(PROJECT_ROOT, "checkpoints")
+    )
     try:
         # 准备数据
         npz_src = os.path.join(PROJECT_ROOT, "data/synthetic_thermal.npz")
