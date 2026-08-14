@@ -409,8 +409,8 @@ def collect_pareto(sweep_dir, out_csv, n_params_map=None) -> None:
 --lambda_neumann_crack   float 0.05
 --lambda_smooth          float 0.0
 # v0.6 新增
---bc_loss_type    str   huber    # 外边界损失：mse（论文 Eq.18）/ huber（Eq.19）
---scheduler       str   cosine   # LR 调度器：cosine / loss_prop（论文 §3.4）
+--bc_loss_type    str   mse      # 外边界损失：mse（论文 Eq.18 合成数据默认）/ huber（Eq.19 含噪 DIC）
+--scheduler       str   loss_prop # LR 调度器：loss_prop（论文 §3.4 损失比例默认）/ cosine
 --lr_min          float 1e-6     # LR 下限（loss_prop 用）
 --logger          str   none     # 训练日志：none / tensorboard / wandb
 ```

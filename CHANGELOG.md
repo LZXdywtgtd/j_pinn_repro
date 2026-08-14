@@ -6,6 +6,21 @@
 
 ---
 
+## [v0.7] - 2026-08-14
+
+### Changed
+- `--bc_loss_type` 默认 `huber` → `mse`（B1：贴合论文 Eq.18 合成场景）
+- `--scheduler` 默认 `cosine` → `loss_prop`（B11：贴合论文 §3.4 损失比例）
+
+### Added
+- `docs/DECISIONS/0001-laplace-substitute.md`（ADR-0001）— 维度简化决策完整溯源
+- ADR 模板（§12）— 后续决策按此规范记录
+
+### Changed
+- ADR-0001 补全§9 当时背景 + §10 局限性 + §11 冲突检测与重新决策机制（用户提醒）
+
+---
+
 ## [v0.6] - 2026-08-14
 
 ### Added

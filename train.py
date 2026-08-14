@@ -92,9 +92,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lambda_bc", type=float, default=1.0)
     p.add_argument("--lambda_neumann_crack", type=float, default=0.05)
     p.add_argument("--lambda_smooth", type=float, default=0.0)
-    # P12 BC loss 类型切换
+    # P12 BC loss 类型切换（v0.7：B1 默认改为 mse 贴合论文 Eq.18 合成场景）
     p.add_argument("--bc_loss_type", type=str, choices=["mse", "huber"],
-                   default="huber", help="外边界损失类型：mse（论文 Eq.18）/ huber（Eq.19）")
+                   default="mse", help="外边界损失类型：mse（论文 Eq.18 合成）/ huber（Eq.19 含噪 DIC）")
     # P2 Z-score 边界去噪（v0.5）
     p.add_argument("--outlier_enabled", action="store_true",
                    help="启用 Z-score 边界去噪（论文 §3.3 Eq.19-20）")
@@ -107,9 +107,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--boundary_strategy", type=str, choices=["resample", "fixed"],
                    default="resample",
                    help="外边界采样策略：resample（每 epoch 重新采样）/ fixed（固定点，P2 用）")
-    # P17 损失比例 LR 调度器
+    # P17 损失比例 LR 调度器（v0.7：B11 默认改为 loss_prop 贴合论文 §3.4）
     p.add_argument("--scheduler", type=str, choices=["cosine", "loss_prop"],
-                   default="cosine", help="LR 调度器：cosine / loss_prop（论文 §3.4）")
+                   default="loss_prop", help="LR 调度器：cosine / loss_prop（论文 §3.4 原算法）")
     p.add_argument("--lr_min", type=float, default=1e-6,
                    help="LR 下限（loss_prop 调度器用）")
     # D3 训练日志
